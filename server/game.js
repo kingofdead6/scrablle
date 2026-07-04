@@ -50,6 +50,8 @@ function shuffledBag() {
   return bag;
 }
 
+export const TURN_SECONDS_OPTIONS = [30, 60, 90, 120, 180, 0]; // 0 = no limit
+
 export function createGame() {
   return {
     board: Array.from({ length: 15 }, () => Array(15).fill(null)),
@@ -61,7 +63,17 @@ export function createGame() {
     scorelessTurns: 0,
     lastMove: null,   // { playerName, type, words, score, cells }
     winners: null,    // [names]
+    turnSeconds: 90,  // per-turn time limit chosen by host; 0 = no limit
+    turnEndsAt: null, // epoch ms when the current turn auto-passes
+    preview: null,    // { playerIdx, cells: [{row, col, letter, isBlank}] } shadow tiles
   };
+}
+
+export function setTurnSeconds(game, seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0 || n > 600) return { error: 'Invalid turn duration.' };
+  game.turnSeconds = Math.round(n);
+  return { ok: true };
 }
 
 export function startGame(game) {
@@ -73,11 +85,17 @@ export function startGame(game) {
   game.bag = shuffledBag();
   game.board = Array.from({ length: 15 }, () => Array(15).fill(null));
   game.turn = Math.floor(Math.random() * game.players.length);
+  game.preview = null;
   for (const p of game.players) {
     p.score = 0;
     p.rack = [];
     drawTiles(game, p);
   }
+  resetTurnClock(game);
+}
+
+export function resetTurnClock(game) {
+  game.turnEndsAt = game.turnSeconds > 0 ? Date.now() + game.turnSeconds * 1000 : null;
 }
 
 function drawTiles(game, player) {
@@ -303,6 +321,25 @@ export function swapTiles(game, playerIdx, letters) {
 
 function nextTurn(game) {
   game.turn = (game.turn + 1) % game.players.length;
+  game.preview = null;
+  resetTurnClock(game);
+}
+
+export function setPreview(game, playerIdx, placements) {
+  if (!Array.isArray(placements) || placements.length === 0) {
+    game.preview = null;
+    return;
+  }
+  const cells = placements
+    .filter(p => Number.isInteger(p.row) && Number.isInteger(p.col) && inBounds(p.row, p.col) && !game.board[p.row][p.col])
+    .slice(0, RACK_SIZE)
+    .map(p => ({
+      row: p.row,
+      col: p.col,
+      letter: p.isBlank ? (p.as || '') : p.letter,
+      isBlank: !!p.isBlank,
+    }));
+  game.preview = { playerIdx, cells };
 }
 
 function finishGame(game, outPlayerIdx) {
@@ -319,6 +356,8 @@ function finishGame(game, outPlayerIdx) {
   const best = Math.max(...game.players.map(p => p.score));
   game.winners = game.players.filter(p => p.score === best).map(p => p.name);
   game.status = 'ended';
+  game.preview = null;
+  game.turnEndsAt = null;
 }
 
 // State safe to broadcast to everyone (racks hidden)
@@ -338,5 +377,8 @@ export function publicState(game, code) {
     bagCount: game.bag.length,
     lastMove: game.lastMove,
     winners: game.winners,
+    turnSeconds: game.turnSeconds,
+    turnEndsAt: game.turnEndsAt,
+    preview: game.preview,
   };
 }

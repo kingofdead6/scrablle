@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 import {
   createGame, startGame, applyMove, passTurn, swapTiles, publicState,
+  setTurnSeconds, setPreview,
 } from './game.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +56,18 @@ setInterval(() => {
     if (now - room.lastActivity > 2 * 60 * 60 * 1000) rooms.delete(code);
   }
 }, 10 * 60 * 1000);
+
+// Auto-pass any turn whose clock has run out
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    const { game } = room;
+    if (game.status !== 'playing' || !game.turnEndsAt) continue;
+    if (now < game.turnEndsAt) continue;
+    passTurn(game, game.turn);
+    broadcast(room);
+  }
+}, 1000);
 
 // ─── Socket handlers ─────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
@@ -121,6 +134,16 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  socket.on('host:setTimer', ({ seconds }, cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can change the timer.' });
+    if (room.game.status !== 'lobby') return cb?.({ error: 'Set the timer before starting the game.' });
+    const result = setTurnSeconds(room.game, seconds);
+    if (result.error) return cb?.(result);
+    cb?.({ ok: true });
+    broadcast(room);
+  });
+
   socket.on('host:restart', (cb) => {
     const room = findRoom();
     if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can restart.' });
@@ -165,6 +188,18 @@ io.on('connection', (socket) => {
     if (result.error) return cb?.(result);
     cb?.({ ok: true });
     broadcast(ctx.room);
+  });
+
+  // Live "shadow tile" preview of tiles a player has staged but not yet submitted.
+  socket.on('player:preview', ({ placements }) => {
+    const room = findRoom();
+    if (!room || room.game.status !== 'playing') return;
+    const player = findPlayer(room);
+    if (!player) return;
+    const idx = room.game.players.indexOf(player);
+    if (room.game.turn !== idx) return;
+    setPreview(room.game, idx, placements);
+    broadcast(room);
   });
 
   socket.on('disconnect', () => {

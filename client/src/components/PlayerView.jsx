@@ -3,6 +3,7 @@ import { socket } from '../socket';
 import { LETTER_VALUES, ALPHABET } from '../constants';
 import Board from './Board';
 import { Toast, useToast } from './Toast';
+import { useCountdown } from '../useCountdown';
 
 export default function PlayerView({ state, rack, me, onLeave }) {
   const [order, setOrder] = useState([]);            // display order of rack indices
@@ -42,6 +43,25 @@ export default function PlayerView({ state, rack, me, onLeave }) {
     setPassArmed(false);
   }, [myTurn]);
 
+  // Broadcast a "shadow tile" preview of what's staged so far, so other
+  // screens can see tiles land before this player confirms the move.
+  useEffect(() => {
+    if (!myTurn) return;
+    const placements = staged.map((s) => ({
+      row: s.row,
+      col: s.col,
+      letter: s.isBlank ? s.as : s.letter,
+      isBlank: s.isBlank,
+      as: s.isBlank ? s.as : undefined,
+    }));
+    const id = setTimeout(() => {
+      socket.emit('player:preview', { placements });
+    }, 150);
+    return () => clearTimeout(id);
+  }, [staged, myTurn]);
+
+  const remaining = useCountdown(state.status === 'playing' ? state.turnEndsAt : null);
+
   const usedIds = useMemo(() => new Set(staged.map((s) => s.id)), [staged]);
   const stagedMap = useMemo(() => {
     const m = new Map();
@@ -57,6 +77,17 @@ export default function PlayerView({ state, rack, me, onLeave }) {
     () => new Set((state.lastMove?.cells || []).map((c) => `${c.row},${c.col}`)),
     [state.lastMove]
   );
+  // Other players' unconfirmed placements (shown as shadow tiles). Skip our
+  // own preview — our staged tiles already render via stagedMap.
+  const shadowMap = useMemo(() => {
+    const m = new Map();
+    if (state.preview && state.preview.playerIdx !== myIdx) {
+      const shadowName = state.players[state.preview.playerIdx]?.name;
+      for (const c of state.preview.cells)
+        m.set(`${c.row},${c.col}`, { letter: c.isBlank ? (c.letter || '?') : c.letter, isBlank: c.isBlank, playerName: shadowName });
+    }
+    return m;
+  }, [state.preview, state.players, myIdx]);
 
   // ── Interactions ──
   const tapRack = (id) => {
@@ -188,10 +219,14 @@ export default function PlayerView({ state, rack, me, onLeave }) {
   }
 
   // ── Playing ──
+  const urgent = myTurn && remaining !== null && remaining <= 10;
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-3 pb-3 pt-3">
-      <div className={`rounded-xl px-4 py-2.5 text-center text-sm font-semibold ${myTurn ? 'bg-gradient-to-r from-brasslight to-brass text-[#241a0d]' : 'card text-mist'}`}>
-        {myTurn ? 'Your turn — tap a tile, then a square' : `Waiting for ${currentName}…`}
+      <div className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-semibold ${myTurn ? 'bg-gradient-to-r from-brasslight to-brass text-[#241a0d]' : 'card text-mist'}`}>
+        <span>{myTurn ? 'Your turn — tap a tile, then a square' : `Waiting for ${currentName}…`}</span>
+        {remaining !== null && (
+          <span className={`font-display text-base font-semibold ${urgent ? 'text-cinnabar' : ''}`}>{remaining}s</span>
+        )}
       </div>
 
       <div className="mt-2 flex items-center justify-between px-1 text-xs text-mist">
@@ -208,6 +243,7 @@ export default function PlayerView({ state, rack, me, onLeave }) {
             board={state.board}
             staged={stagedMap}
             lastCells={lastCells}
+            shadow={shadowMap}
             onCellTap={tapCell}
             interactive
           />

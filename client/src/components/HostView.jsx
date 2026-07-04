@@ -1,6 +1,7 @@
 import { socket } from '../socket';
 import Board from './Board';
 import { Toast, useToast } from './Toast';
+import { useCountdown } from '../useCountdown';
 
 function CodeTile({ ch }) {
   return (
@@ -26,12 +27,13 @@ function Header({ code, onLeave }) {
   );
 }
 
-function PlayerRail({ state }) {
+function PlayerRail({ state, remaining }) {
   return (
     <div className="card space-y-2 p-4">
       <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-mist">Players</h3>
       {state.players.map((p, i) => {
         const active = state.status === 'playing' && state.turn === i;
+        const urgent = active && remaining !== null && remaining <= 10;
         return (
           <div
             key={p.id}
@@ -44,7 +46,14 @@ function PlayerRail({ state }) {
                 <p className="text-xs text-mist">{p.rackCount} tiles{active ? ' · playing now' : ''}</p>
               </div>
             </div>
-            <span className="font-display text-2xl font-semibold text-brasslight">{p.score}</span>
+            <div className="flex items-center gap-2.5">
+              {active && remaining !== null && (
+                <span className={`font-display text-lg font-semibold ${urgent ? 'text-cinnabar' : 'text-mist'}`}>
+                  {remaining}s
+                </span>
+              )}
+              <span className="font-display text-2xl font-semibold text-brasslight">{p.score}</span>
+            </div>
           </div>
         );
       })}
@@ -77,6 +86,35 @@ function LastMove({ move }) {
       {move.type === 'swap' && (
         <p className="mt-1.5 text-sm"><span className="font-semibold text-ivory">{move.playerName}</span> swapped {move.count} tiles.</p>
       )}
+    </div>
+  );
+}
+
+const TIMER_OPTIONS = [
+  { seconds: 30, label: '30s' },
+  { seconds: 60, label: '1 min' },
+  { seconds: 90, label: '90s' },
+  { seconds: 120, label: '2 min' },
+  { seconds: 180, label: '3 min' },
+  { seconds: 0, label: 'No limit' },
+];
+
+function TimerPicker({ seconds }) {
+  const setTimer = (s) => socket.emit('host:setTimer', { seconds: s });
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-mist">Turn timer</p>
+      <div className="mt-3 flex flex-wrap justify-center gap-2">
+        {TIMER_OPTIONS.map((opt) => (
+          <button
+            key={opt.seconds}
+            onClick={() => setTimer(opt.seconds)}
+            className={`btn h-9 px-3.5 text-sm ${seconds === opt.seconds ? 'btn-brass' : 'btn-ghost'}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -118,6 +156,8 @@ export default function HostView({ state, onLeave }) {
             })}
           </div>
 
+          <TimerPicker seconds={state.turnSeconds} />
+
           <div className="w-full max-w-md">
             <button onClick={start} disabled={state.players.length < 2} className="btn btn-brass h-12 w-full text-lg">
               Start game
@@ -133,6 +173,14 @@ export default function HostView({ state, onLeave }) {
   }
 
   const lastCells = new Set((state.lastMove?.cells || []).map((c) => `${c.row},${c.col}`));
+  const remaining = useCountdown(state.status === 'playing' ? state.turnEndsAt : null);
+
+  const shadowMap = new Map();
+  if (state.preview) {
+    const shadowName = state.players[state.preview.playerIdx]?.name;
+    for (const c of state.preview.cells)
+      shadowMap.set(`${c.row},${c.col}`, { letter: c.isBlank ? (c.letter || '?') : c.letter, isBlank: c.isBlank, playerName: shadowName });
+  }
 
   // ── Playing / ended ──
   return (
@@ -151,10 +199,10 @@ export default function HostView({ state, onLeave }) {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="mx-auto w-full" style={{ maxWidth: 'min(80vh, 100%)' }}>
-          <Board board={state.board} lastCells={lastCells} />
+          <Board board={state.board} lastCells={lastCells} shadow={shadowMap} />
         </div>
         <aside className="space-y-4">
-          <PlayerRail state={state} />
+          <PlayerRail state={state} remaining={remaining} />
           <div className="card flex items-center justify-between p-4">
             <span className="text-xs font-semibold uppercase tracking-[0.18em] text-mist">Tile bag</span>
             <span className="font-display text-2xl font-semibold text-ivory">{state.bagCount}</span>

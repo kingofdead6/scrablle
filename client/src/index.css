@@ -105,6 +105,19 @@ body {
   outline-offset: -0.1cqi;
   background: linear-gradient(165deg, #fbeed0, var(--color-ivory));
 }
+.tile--shadow {
+  background: color-mix(in srgb, var(--color-brass) 22%, transparent);
+  color: color-mix(in srgb, var(--color-ivory) 75%, transparent);
+  outline: 0.3cqi dashed color-mix(in srgb, var(--color-brasslight) 70%, transparent);
+  outline-offset: -0.1cqi;
+  box-shadow: none;
+  opacity: 0.65;
+  animation: shadowPulse 1.4s ease-in-out infinite;
+}
+@keyframes shadowPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.8; }
+}
 .pop { animation: pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1); }
 @keyframes pop {
   0% { transform: scale(0.55); opacity: 0; }
