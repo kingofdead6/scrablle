@@ -73,3 +73,6 @@ client/src/
 ```
 
 **Socket events:** `host:create` `host:start` `host:restart` · `player:join` `player:move` `player:pass` `player:swap` · `rejoin` → server emits `state` (public, racks hidden) to the room and `rack` privately to each player.
+
+
+Mobile App Link : https://scrable-app.vercel.app/scrablle.apk
