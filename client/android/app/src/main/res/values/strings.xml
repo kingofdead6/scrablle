@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">scrablle</string>
+    <string name="title_activity_main">scrablle</string>
+    <string name="package_name">com.scrablle.scrablle</string>
+    <string name="custom_url_scheme">com.scrablle.scrablle</string>
+</resources>
