@@ -1,6 +1,6 @@
 # Scrabble Live
 
-Party-style Scrabble for **5 devices or less**: one screen hosts the shared board, up to 4 phones join with a 4-letter code and play from their own rack. Every move syncs to every device in real time.
+Party-style Scrabble for **5 devices or less**: one screen hosts the shared board, up to 4 phones join with a 4-letter code and play from their own rack. Every move syncs to every device in real time. Short on people? Fill the empty seats with **up to 3 bots** and play solo.
 
 **Stack:** Node.js + Express + Socket.io (server-authoritative game engine) · React + Vite + Tailwind v4 (client). No WebRTC — all devices connect to one Socket.io server, so there are zero NAT/TURN headaches and the server is the single source of truth for validation and scoring.
 
@@ -16,7 +16,8 @@ cd client && npm install && npm run dev
 
 1. On the **host machine**, open the LAN URL Vite prints (e.g. `http://192.168.1.20:5173`) → **Create a room**. Use the LAN URL, not `localhost`, so the code screen shows an address phones can actually reach.
 2. On each **phone** (same Wi-Fi), open that same URL → enter the 4-letter code + a name.
-3. Host presses **Start game** (2–4 players).
+3. Optionally press **+ Add bot** (up to 3) — pick Easy/Medium/Hard before adding, or tap a bot's level to change it.
+4. Host presses **Start game** (2–4 players, at least one of them human).
 
 The client auto-connects its socket to `http://<same-hostname>:3001`, so whatever address you opened the page from is the one the phones use — no config needed. To point elsewhere, set `VITE_SERVER_URL` in `client/.env`.
 
@@ -31,11 +32,20 @@ One process, one port — deploy `server/` (with the built `client/dist` next to
 
 ## How to play
 
-- Tap a tile in your rack, then tap a square. Tap a placed (gold-ringed) tile to take it back.
-- **Play** submits; the server validates and scores, then broadcasts to all screens.
+- Tap a tile in your rack, then tap a square. Legal landing squares light up while a tile is selected. Tap a placed (gold-ringed) tile to take it back.
+- The running total (**+24**, with each word broken down) appears above the rack and on the **Play** button as you place tiles, so you know what a word is worth before you commit.
+- **Play** submits; the server validates and scores, then broadcasts to all screens. The score you actually earned bursts on screen, with confetti on a bingo.
 - **Swap** exchanges selected tiles with the bag (ends your turn). **Pass** skips (tap twice to confirm).
 - Blank tiles open a letter picker; they score 0 and show a red dot.
+- **⟳ Refresh** pulls a fresh board and rack from the server (and reconnects first if the socket dropped). **Leave** gives up your seat — mid-game your tiles go back to the bag and turn order closes over you.
+- **🎨** picks one of 8 board themes (Midnight Felt, Classic Wood, Emerald Table, Ocean Deep, Noir, Neon Arcade, Parchment, Sakura). The choice is per-device and remembered.
 - Refreshing or losing connection is fine — the seat is held and the app auto-rejoins.
+
+## Bots
+
+The host can seat up to 3 computer players from the lobby, each at Easy, Medium or Hard. They take their turn about a second or two after it comes round, so moves feel played rather than teleported in.
+
+`server/bot.js` generates moves the classic way — anchors (empty squares touching the board), per-square cross-checks for the perpendicular word, and a prefix index over the dictionary to prune dead branches. Every candidate goes back through `validateMove()` for scoring, so a bot can never make a move a human couldn't. Difficulty is how it picks from that list: Hard takes the best play, Medium samples the top slice, Easy takes the best of a handful of random looks. Bots hold on to blanks unless a play really pays for them, and swap awkward tiles when they're stuck.
 
 ## Rules implemented (server/game.js)
 

@@ -1,22 +1,25 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 
 export function useToast() {
-  const [msg, setMsg] = useState(null);
+  const [toast, setToast] = useState(null);
   const timer = useRef(null);
-  const show = useCallback((text) => {
-    setMsg(text);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // show(text) for a problem, show(text, 'ok') for a confirmation.
+  const show = useCallback((text, tone = 'error') => {
+    setToast({ text, tone, key: Date.now() });
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setMsg(null), 2600);
+    timer.current = setTimeout(() => setToast(null), 2600);
   }, []);
-  return [msg, show];
+  return [toast, show];
 }
 
 export function Toast({ msg }) {
   if (!msg) return null;
+  const { text, tone, key } = typeof msg === 'string' ? { text: msg, tone: 'error' } : msg;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex justify-center px-4">
-      <div className="fade-up rounded-xl border border-cinnabar/40 bg-[#2a1b1e] px-4 py-2.5 text-sm font-medium text-[#ffc0b8] shadow-lg">
-        {msg}
+      <div key={key} className={`toast fade-up px-4 py-2.5 text-sm font-medium shadow-lg ${tone === 'ok' ? 'toast--ok' : ''}`}>
+        {text}
       </div>
     </div>
   );

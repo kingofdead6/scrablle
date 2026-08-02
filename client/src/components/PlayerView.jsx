@@ -2,10 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { socket } from '../socket';
 import { LETTER_VALUES, ALPHABET } from '../constants';
 import Board from './Board';
+import Confirm from './Confirm';
+import ScoreBurst, { useScoreBurst } from './ScoreBurst';
+import ThemeSheet, { ThemeButton } from './ThemePicker';
+import { RefreshButton } from './GameBarButtons';
 import { Toast, useToast } from './Toast';
 import { useCountdown } from '../useCountdown';
+import { scoreStaged } from '../scoring';
 
-export default function PlayerView({ state, rack, me, onLeave }) {
+function Thinking() {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      {[0, 1, 2].map((i) => <span key={i} className="think-dot" style={{ '--i': i }} />)}
+    </span>
+  );
+}
+
+export default function PlayerView({ state, rack, me, onLeave, theme, onTheme }) {
   const [order, setOrder] = useState([]);            // display order of rack indices
   const [selectedId, setSelectedId] = useState(null);
   const [staged, setStaged] = useState([]);          // {id, letter, isBlank, as, row, col}
@@ -14,12 +27,16 @@ export default function PlayerView({ state, rack, me, onLeave }) {
   const [blankPick, setBlankPick] = useState(null);  // {id, row, col}
   const [passArmed, setPassArmed] = useState(false);
   const [zoom, setZoom] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const [toast, showToast] = useToast();
+  const [burst, showBurst] = useScoreBurst();
 
   const myIdx = state.players.findIndex((p) => p.id === me);
   const myScore = state.players[myIdx]?.score ?? 0;
   const myTurn = state.status === 'playing' && state.turn === myIdx;
-  const currentName = state.players[state.turn]?.name;
+  const current = state.players[state.turn];
+  const currentName = current?.name;
 
   // Reset local staging whenever the server rack actually changes
   const rackKey = rack.join('');
@@ -89,6 +106,16 @@ export default function PlayerView({ state, rack, me, onLeave }) {
     return m;
   }, [state.preview, state.players, myIdx]);
 
+  // What the staged word is worth right now. The server still has the final
+  // say on whether the word is real — this is only the arithmetic.
+  const potential = useMemo(() => {
+    if (staged.length === 0) return null;
+    return scoreStaged(
+      state.board,
+      staged.map((s) => ({ row: s.row, col: s.col, letter: s.isBlank ? s.as : s.letter, isBlank: s.isBlank }))
+    );
+  }, [staged, state.board]);
+
   // ── Interactions ──
   const tapRack = (id) => {
     if (swapMode) {
@@ -147,7 +174,10 @@ export default function PlayerView({ state, rack, me, onLeave }) {
       isBlank: s.isBlank,
     }));
     socket.emit('player:move', { placements }, (res) => {
-      if (res?.error) showToast(res.error);
+      if (res?.error) return showToast(res.error);
+      // The server reports what it actually scored — show the breakdown.
+      showBurst(res);
+      navigator.vibrate?.(res.bingo ? [40, 60, 40, 60, 120] : 40);
     });
   };
 
@@ -171,6 +201,26 @@ export default function PlayerView({ state, rack, me, onLeave }) {
     socket.emit('player:swap', { letters }, (res) => res?.error && showToast(res.error));
   };
 
+  const overlays = (
+    <>
+      {themeOpen && <ThemeSheet theme={theme} onPick={onTheme} onClose={() => setThemeOpen(false)} />}
+      {confirmLeave && (
+        <Confirm
+          title={state.status === 'playing' ? 'Leave the game?' : 'Leave the room?'}
+          body={
+            state.status === 'playing'
+              ? 'Your tiles go back to the bag and the others keep playing without you. You cannot rejoin this game.'
+              : 'You can join again with the room code.'
+          }
+          confirmLabel="Leave"
+          onConfirm={() => { setConfirmLeave(false); onLeave(); }}
+          onCancel={() => setConfirmLeave(false)}
+        />
+      )}
+      <Toast msg={toast} />
+    </>
+  );
+
   // ── Lobby ──
   if (state.status === 'lobby') {
     return (
@@ -180,15 +230,28 @@ export default function PlayerView({ state, rack, me, onLeave }) {
           <h2 className="mt-2 font-display text-2xl font-semibold text-ivory">You're in.</h2>
           <p className="mt-1 text-sm text-mist">Waiting for the host to start…</p>
           <div className="mt-5 space-y-2">
-            {state.players.map((p) => (
-              <div key={p.id} className={`flex items-center justify-between rounded-lg border px-3 py-2 ${p.id === me ? 'border-brass/50 bg-brass/10' : 'border-line bg-panel2/50'}`}>
-                <span className="font-medium">{p.name}{p.id === me && ' (you)'}</span>
-                <span className={`h-2 w-2 rounded-full ${p.connected ? 'bg-sage' : 'bg-cinnabar'}`} />
+            {state.players.map((p, i) => (
+              <div
+                key={p.id}
+                className={`deal flex items-center justify-between rounded-lg border px-3 py-2 ${p.id === me ? 'border-brass/50 bg-brass/10' : 'border-line bg-panel2/50'}`}
+                style={{ '--i': i }}
+              >
+                <span className="font-medium">
+                  {p.isBot && <span className="mr-1.5" aria-hidden="true">🤖</span>}
+                  {p.name}{p.id === me && ' (you)'}
+                  {p.isBot && <span className="ml-1.5 text-xs uppercase tracking-wide text-mist">{p.difficulty}</span>}
+                </span>
+                {!p.isBot && <span className={`h-2 w-2 rounded-full ${p.connected ? 'bg-sage' : 'bg-cinnabar'}`} />}
               </div>
             ))}
           </div>
         </div>
-        <button onClick={onLeave} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
+        <div className="flex gap-2">
+          <ThemeButton onClick={() => setThemeOpen(true)} className="h-10 px-4 text-sm" />
+          <RefreshButton onDone={showToast} className="h-10 px-4 text-sm" />
+          <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
+        </div>
+        {overlays}
       </div>
     );
   }
@@ -196,45 +259,71 @@ export default function PlayerView({ state, rack, me, onLeave }) {
   // ── Ended ──
   if (state.status === 'ended') {
     const standings = [...state.players].sort((a, b) => b.score - a.score);
+    const iWon = state.winners?.includes(state.players[myIdx]?.name);
     return (
       <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-6 px-5">
         <div className="fade-up card w-full p-6 text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-mist">Game over</p>
-          <h2 className="mt-1 font-display text-3xl font-semibold text-brasslight">
-            {state.winners?.includes(state.players[myIdx]?.name) ? 'You win!' : `${state.winners?.join(' & ')} wins`}
+          <h2 className="burst-number mt-1 font-display text-3xl font-semibold">
+            {iWon ? 'You win!' : `${state.winners?.join(' & ')} wins`}
           </h2>
           <div className="mt-5 space-y-2 text-left">
             {standings.map((p, i) => (
-              <div key={p.id} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${p.id === me ? 'border-brass/50 bg-brass/10' : 'border-line bg-panel2/50'}`}>
-                <span className="font-medium">{i + 1}. {p.name}</span>
+              <div
+                key={p.id}
+                className={`deal flex items-center justify-between rounded-lg border px-3 py-2.5 ${p.id === me ? 'border-brass/50 bg-brass/10' : 'border-line bg-panel2/50'}`}
+                style={{ '--i': i }}
+              >
+                <span className="font-medium">
+                  {i + 1}. {p.isBot && <span aria-hidden="true">🤖 </span>}{p.name}
+                  {p.left && <span className="ml-1.5 text-xs text-mist">left</span>}
+                </span>
                 <span className="font-display text-xl font-semibold text-ivory">{p.score}</span>
               </div>
             ))}
           </div>
           <p className="mt-4 text-xs text-mist">The host screen can start a rematch.</p>
         </div>
-        <button onClick={onLeave} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
+        <div className="flex gap-2">
+          <ThemeButton onClick={() => setThemeOpen(true)} className="h-10 px-4 text-sm" />
+          <RefreshButton onDone={showToast} className="h-10 px-4 text-sm" />
+          <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
+        </div>
+        {overlays}
       </div>
     );
   }
 
   // ── Playing ──
   const urgent = myTurn && remaining !== null && remaining <= 10;
+  const botThinking = state.thinking && state.thinking.playerIdx === state.turn;
+
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-3 pb-3 pt-3">
-      <div className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-semibold ${myTurn ? 'bg-gradient-to-r from-brasslight to-brass text-[#241a0d]' : 'card text-mist'}`}>
-        <span>{myTurn ? 'Your turn — tap a tile, then a square' : `Waiting for ${currentName}…`}</span>
+      <div className={`slide-down flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-semibold ${myTurn ? 'bg-gradient-to-r from-brasslight to-brass text-onbrass' : 'card text-mist'}`}>
+        <span>
+          {myTurn
+            ? 'Your turn — tap a tile, then a square'
+            : botThinking
+              ? <>{currentName} is thinking <Thinking /></>
+              : `Waiting for ${currentName}…`}
+        </span>
         {remaining !== null && (
           <span className={`font-display text-base font-semibold ${urgent ? 'text-cinnabar' : ''}`}>{remaining}s</span>
         )}
       </div>
 
-      <div className="mt-2 flex items-center justify-between px-1 text-xs text-mist">
+      <div className="mt-2 flex items-center justify-between gap-2 px-1 text-xs text-mist">
         <span>You <span className="font-display text-base font-semibold text-brasslight">{myScore}</span></span>
-        <span>Bag {state.bagCount} · Room {state.code}</span>
-        <button onClick={() => setZoom((z) => !z)} className="btn btn-ghost h-7 px-2.5 text-xs">
-          {zoom ? 'Fit board' : 'Zoom board'}
-        </button>
+        <span className="truncate">Bag {state.bagCount} · {state.code}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <button onClick={() => setZoom((z) => !z)} className="btn btn-ghost h-7 px-2.5 text-xs">
+            {zoom ? 'Fit' : 'Zoom'}
+          </button>
+          <ThemeButton onClick={() => setThemeOpen(true)} className="h-7 px-2 text-xs" />
+          <RefreshButton onDone={showToast} className="h-7 px-2 text-xs" />
+          <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-7 px-2.5 text-xs">Leave</button>
+        </span>
       </div>
 
       <div className="mt-2 overflow-auto rounded-2xl">
@@ -246,11 +335,31 @@ export default function PlayerView({ state, rack, me, onLeave }) {
             shadow={shadowMap}
             onCellTap={tapCell}
             interactive
+            showTargets={myTurn && selectedId !== null}
           />
         </div>
       </div>
 
-      {state.lastMove?.type === 'play' && (
+      {/* Live worth of what's on the board right now */}
+      {potential && (
+        <div key={potential.valid ? potential.score : 'bad'} className="fade-up mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs">
+          {potential.valid ? (
+            <>
+              <span className="font-display text-lg font-semibold text-brasslight">+{potential.score}</span>
+              {potential.words.map((w, i) => (
+                <span key={i} className="text-mist">
+                  <span className="font-display font-semibold text-ivory">{w.word}</span> {w.score}
+                </span>
+              ))}
+              {potential.bingo && <span className="font-semibold text-sage">bingo +50</span>}
+            </>
+          ) : (
+            <span className="text-mist">{potential.reason}</span>
+          )}
+        </div>
+      )}
+
+      {!potential && state.lastMove?.type === 'play' && (
         <p className="mt-2 px-1 text-xs text-mist">
           Last: <span className="text-ivory">{state.lastMove.playerName}</span> —{' '}
           {state.lastMove.words.map((w) => w.word).join(', ')}{' '}
@@ -261,7 +370,7 @@ export default function PlayerView({ state, rack, me, onLeave }) {
       {/* Rack + actions dock */}
       <div className="card sticky bottom-2 mt-auto space-y-3 p-3">
         <div className="flex justify-center gap-1.5">
-          {order.map((id) => {
+          {order.map((id, slot) => {
             const letter = rack[id];
             if (letter === undefined) return null;
             const ghost = usedIds.has(id);
@@ -273,7 +382,13 @@ export default function PlayerView({ state, rack, me, onLeave }) {
                   ? 'rtile rtile--selected'
                   : 'rtile';
             return (
-              <button key={id} onClick={() => tapRack(id)} disabled={ghost} className={cls}>
+              <button
+                key={id}
+                onClick={() => tapRack(id)}
+                disabled={ghost}
+                className={`${cls} deal`}
+                style={{ '--i': slot }}
+              >
                 {letter === '_' && !ghost && <span className="tile-blankmark" style={{ width: 6, height: 6 }} />}
                 <span className="rtile-letter">{letter === '_' ? '' : letter}</span>
                 <span className="rtile-value">{LETTER_VALUES[letter] || ''}</span>
@@ -290,15 +405,24 @@ export default function PlayerView({ state, rack, me, onLeave }) {
             </button>
           </div>
         ) : (
-          <div className="flex gap-2">
-            <button onClick={recall} disabled={staged.length === 0} className="btn btn-ghost h-11 px-3 text-sm">Recall</button>
-            <button onClick={shuffle} className="btn btn-ghost h-11 px-3 text-sm">Shuffle</button>
-            <button onClick={toggleSwap} disabled={!myTurn} className="btn btn-ghost h-11 px-3 text-sm">Swap</button>
-            <button onClick={pass} disabled={!myTurn} className={`btn h-11 px-3 text-sm ${passArmed ? 'btn-danger' : 'btn-ghost'}`}>
+          <div className="flex gap-1.5">
+            <button onClick={recall} disabled={staged.length === 0} className="btn btn-ghost h-11 px-2.5 text-xs">Recall</button>
+            <button onClick={shuffle} className="btn btn-ghost h-11 px-2.5 text-xs">Shuffle</button>
+            <button onClick={toggleSwap} disabled={!myTurn} className="btn btn-ghost h-11 px-2.5 text-xs">Swap</button>
+            <button onClick={pass} disabled={!myTurn} className={`btn h-11 px-2.5 text-xs ${passArmed ? 'btn-danger shake' : 'btn-ghost'}`}>
               {passArmed ? 'Sure?' : 'Pass'}
             </button>
-            <button onClick={submit} disabled={!myTurn || staged.length === 0} className="btn btn-brass h-11 flex-1 text-base">
+            <button
+              onClick={submit}
+              disabled={!myTurn || staged.length === 0}
+              className="btn btn-brass h-11 min-w-0 flex-1 gap-1.5 whitespace-nowrap text-base"
+            >
               Play
+              {potential?.valid && (
+                <span className="pop rounded-md bg-onbrass/15 px-1.5 py-0.5 font-display text-sm font-bold">
+                  +{potential.score}
+                </span>
+              )}
             </button>
           </div>
         )}
@@ -307,14 +431,15 @@ export default function PlayerView({ state, rack, me, onLeave }) {
       {/* Blank tile letter picker */}
       {blankPick && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-ink/80 p-5" onClick={() => setBlankPick(null)}>
-          <div className="card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="burst card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-display text-lg font-semibold text-ivory">Blank tile — choose a letter</h3>
             <div className="mt-4 grid grid-cols-6 gap-2">
-              {ALPHABET.map((l) => (
+              {ALPHABET.map((l, i) => (
                 <button
                   key={l}
                   onClick={() => chooseBlank(l)}
-                  className="rtile !h-11 !w-full"
+                  className="rtile deal !h-11 !w-full"
+                  style={{ '--i': i % 6 }}
                 >
                   <span className="rtile-letter !text-xl">{l}</span>
                 </button>
@@ -324,7 +449,8 @@ export default function PlayerView({ state, rack, me, onLeave }) {
         </div>
       )}
 
-      <Toast msg={toast} />
+      <ScoreBurst burst={burst} />
+      {overlays}
     </div>
   );
 }

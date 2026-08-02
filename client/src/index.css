@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* ── Tokens: felt table at night, ivory tiles, brass hardware ── */
+/* ── Tokens: felt table at night, ivory tiles, brass hardware ──
+   Every board theme re-points these, so the whole UI follows the board. */
 @theme {
   --color-ink: #0e1420;
   --color-panel: #18202f;
@@ -11,22 +12,271 @@
   --color-tiletext: #2a2118;
   --color-brass: #c9a15c;
   --color-brasslight: #e8caa0;
+  --color-onbrass: #241a0d;
   --color-sage: #7fb7a3;
   --color-lagoon: #4f86a8;
   --color-rosewood: #b0687c;
   --color-cinnabar: #e0685c;
   --color-mist: #9db0cc;
+  --color-text: #e7ecf5;
+  --color-dangerink: #ffb3aa;
 
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Outfit", system-ui, sans-serif;
 }
 
+/* Board surfaces. Themes override these alongside the colour tokens above. */
+:root {
+  --page-a: #16203a;
+  --page-b: var(--color-ink);
+  --board-a: #141c2e;
+  --board-b: #101725;
+  --cell-face: #1c2536;
+  --cell-dl: color-mix(in srgb, var(--color-sage) 26%, var(--cell-face));
+  --cell-tl: color-mix(in srgb, var(--color-lagoon) 34%, var(--cell-face));
+  --cell-dw: color-mix(in srgb, var(--color-rosewood) 30%, var(--cell-face));
+  --cell-tw: color-mix(in srgb, var(--color-cinnabar) 34%, var(--cell-face));
+  --cell-ink: rgb(255 255 255 / 0.42);
+  --cell-edge: rgb(255 255 255 / 0.03);
+  --star: var(--color-brass);
+  --tile-a: var(--color-ivory);
+  --tile-b: var(--color-ivorydeep);
+  --tile-ink: var(--color-tiletext);
+  --tile-edge: #b99f6e;
+}
+
 html, body, #root { height: 100%; }
 body {
-  background: radial-gradient(1200px 700px at 50% -10%, #16203a 0%, var(--color-ink) 55%);
-  color: #e7ecf5;
+  background: radial-gradient(1200px 700px at 50% -10%, var(--page-a) 0%, var(--page-b) 55%);
+  background-attachment: fixed;
+  color: var(--color-text);
   font-family: var(--font-body);
   -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.35s ease, color 0.35s ease;
+}
+
+/* ── Board themes ─────────────────────────────────────────────────────────── */
+html[data-board-theme="classic"] {
+  --color-ink: #1b1410;
+  --color-panel: #2a1f17;
+  --color-panel2: #362719;
+  --color-line: #4a3826;
+  --color-brass: #d9a95f;
+  --color-brasslight: #f2d49b;
+  --color-sage: #6fa8c8;
+  --color-cinnabar: #d1503f;
+  --color-mist: #c2a98c;
+  --color-text: #f5e9d7;
+  --page-a: #3b2a1c;
+  --page-b: #150f0b;
+  --board-a: #b98d55;
+  --board-b: #966c3c;
+  --cell-face: #e9dfc7;
+  --cell-dl: #a8cede;
+  --cell-tl: #5f9ec4;
+  --cell-dw: #edaba1;
+  --cell-tw: #cf5340;
+  --cell-ink: rgb(60 44 28 / 0.6);
+  --cell-edge: rgb(88 62 34 / 0.18);
+  --star: #8a5a2b;
+  --tile-a: #fbf3df;
+  --tile-b: #efe0bd;
+  --tile-ink: #3b2c17;
+  --tile-edge: #c0a172;
+}
+
+html[data-board-theme="emerald"] {
+  --color-ink: #071711;
+  --color-panel: #0f2a21;
+  --color-panel2: #16382c;
+  --color-line: #245040;
+  --color-brass: #d5b25f;
+  --color-brasslight: #f0dba2;
+  --color-sage: #6fc79f;
+  --color-lagoon: #4d9fb5;
+  --color-rosewood: #c08a72;
+  --color-cinnabar: #dd7259;
+  --color-mist: #9dc4b2;
+  --color-text: #e8f5ee;
+  --page-a: #10402f;
+  --page-b: #05120d;
+  --board-a: #12362a;
+  --board-b: #0b241c;
+  --cell-face: #17453a;
+  --cell-dl: #3f8f6f;
+  --cell-tl: #2f7c93;
+  --cell-dw: #a9705d;
+  --cell-tw: #c2573f;
+  --cell-ink: rgb(230 255 242 / 0.45);
+  --star: #e2c274;
+}
+
+html[data-board-theme="ocean"] {
+  --color-ink: #061420;
+  --color-panel: #0d2436;
+  --color-panel2: #133247;
+  --color-line: #1f4a66;
+  --color-brass: #5fc7d9;
+  --color-brasslight: #a9ebf4;
+  --color-onbrass: #052029;
+  --color-sage: #55c1a6;
+  --color-lagoon: #4f9fd8;
+  --color-rosewood: #c07f9c;
+  --color-cinnabar: #e2795f;
+  --color-mist: #8fb6cf;
+  --color-text: #e4f2fa;
+  --page-a: #0d3a56;
+  --page-b: #030d16;
+  --board-a: #0d2b3d;
+  --board-b: #071b28;
+  --cell-face: #123244;
+  --cell-dl: #2f7f79;
+  --cell-tl: #2e6ea8;
+  --cell-dw: #96586f;
+  --cell-tw: #c25a44;
+  --cell-ink: rgb(226 245 255 / 0.45);
+  --star: #7fdcea;
+  --tile-a: #f0f6fa;
+  --tile-b: #d9e6ef;
+  --tile-ink: #14303f;
+  --tile-edge: #9fb4c2;
+}
+
+html[data-board-theme="noir"] {
+  --color-ink: #0b0b0b;
+  --color-panel: #171717;
+  --color-panel2: #1f1f1f;
+  --color-line: #333333;
+  --color-ivory: #ededed;
+  --color-ivorydeep: #d5d5d5;
+  --color-brass: #b8b8b8;
+  --color-brasslight: #ececec;
+  --color-onbrass: #111111;
+  --color-sage: #8f8f8f;
+  --color-lagoon: #6f6f6f;
+  --color-rosewood: #a0a0a0;
+  --color-cinnabar: #e05a4e;
+  --color-mist: #9a9a9a;
+  --color-text: #eaeaea;
+  --page-a: #1f1f1f;
+  --page-b: #060606;
+  --board-a: #1a1a1a;
+  --board-b: #101010;
+  --cell-face: #242424;
+  --cell-dl: #3c3c3c;
+  --cell-tl: #545454;
+  --cell-dw: #6d6d6d;
+  --cell-tw: #8a8a8a;
+  --cell-ink: rgb(255 255 255 / 0.4);
+  --star: #d6d6d6;
+  --tile-a: #f4f4f4;
+  --tile-b: #dcdcdc;
+  --tile-ink: #141414;
+  --tile-edge: #9a9a9a;
+}
+
+html[data-board-theme="neon"] {
+  --color-ink: #070312;
+  --color-panel: #150d24;
+  --color-panel2: #1e1233;
+  --color-line: #3b2260;
+  --color-ivory: #f4ecff;
+  --color-ivorydeep: #d9c9f5;
+  --color-brass: #2ef2d0;
+  --color-brasslight: #9dfff0;
+  --color-onbrass: #04231e;
+  --color-sage: #2ef2d0;
+  --color-lagoon: #4d7dff;
+  --color-rosewood: #b45cff;
+  --color-cinnabar: #ff3fa4;
+  --color-mist: #a98fd6;
+  --color-text: #f1e9ff;
+  --page-a: #2a0d4a;
+  --page-b: #04010c;
+  --board-a: #150d24;
+  --board-b: #0a0516;
+  --cell-face: #1b1030;
+  --cell-dl: #145f57;
+  --cell-tl: #1c3a86;
+  --cell-dw: #5a2b86;
+  --cell-tw: #8a1655;
+  --cell-ink: rgb(200 170 255 / 0.55);
+  --cell-edge: rgb(160 100 255 / 0.16);
+  --star: #2ef2d0;
+  --tile-a: #f6efff;
+  --tile-b: #ddcbf7;
+  --tile-ink: #1c0c33;
+  --tile-edge: #9a6fd0;
+}
+
+html[data-board-theme="parchment"] {
+  --color-ink: #efe4cd;
+  --color-panel: #fbf4e4;
+  --color-panel2: #f2e7cf;
+  --color-line: #d9c7a4;
+  --color-ivory: #33291b;
+  --color-ivorydeep: #4a3d29;
+  --color-brass: #b98d4d;
+  --color-brasslight: #8a5f2a;
+  --color-onbrass: #fdf7ea;
+  --color-sage: #52886a;
+  --color-lagoon: #46718f;
+  --color-rosewood: #9c5f70;
+  --color-cinnabar: #b4402f;
+  --color-mist: #7b6a51;
+  --color-text: #3a3020;
+  --color-dangerink: #8f2f21;
+  --page-a: #fbf3e2;
+  --page-b: #e6d8bc;
+  --board-a: #e0cfa9;
+  --board-b: #d2bd91;
+  --cell-face: #f6efdd;
+  --cell-dl: #bcd6df;
+  --cell-tl: #7aa9c2;
+  --cell-dw: #e6b1a4;
+  --cell-tw: #c96a52;
+  --cell-ink: rgb(70 55 32 / 0.55);
+  --cell-edge: rgb(120 96 58 / 0.2);
+  --star: #a0702c;
+  --tile-a: #fffaf0;
+  --tile-b: #f0e4c9;
+  --tile-ink: #3a2c17;
+  --tile-edge: #c8ac7c;
+}
+
+html[data-board-theme="sakura"] {
+  --color-ink: #f6e6ea;
+  --color-panel: #fdf3f6;
+  --color-panel2: #f7e4ea;
+  --color-line: #e6c4d1;
+  --color-ivory: #3b2733;
+  --color-ivorydeep: #55394a;
+  --color-brass: #d1708f;
+  --color-brasslight: #9c4568;
+  --color-onbrass: #fff6f9;
+  --color-sage: #5f9080;
+  --color-lagoon: #6a7fb5;
+  --color-rosewood: #b96f92;
+  --color-cinnabar: #c9455c;
+  --color-mist: #8a6b78;
+  --color-text: #3f2b36;
+  --color-dangerink: #9c2439;
+  --page-a: #fdeef3;
+  --page-b: #efd6df;
+  --board-a: #f2cfda;
+  --board-b: #e5b8c8;
+  --cell-face: #fdeef2;
+  --cell-dl: #cfe1dc;
+  --cell-tl: #9db6d8;
+  --cell-dw: #f0b9cb;
+  --cell-tw: #d97e9c;
+  --cell-ink: rgb(90 55 70 / 0.5);
+  --cell-edge: rgb(150 100 120 / 0.18);
+  --star: #b8577c;
+  --tile-a: #fffbfc;
+  --tile-b: #f6e2e9;
+  --tile-ink: #4a2a38;
+  --tile-edge: #d9aebe;
 }
 
 /* ── Board (scales with its own width via container queries) ── */
@@ -36,44 +286,59 @@ body {
   grid-template-columns: repeat(15, 1fr);
   gap: 0.5cqi;
   padding: 1.2cqi;
-  background: linear-gradient(160deg, #141c2e, #101725);
+  background: linear-gradient(160deg, var(--board-a), var(--board-b));
   border: 1px solid var(--color-line);
   border-radius: 1.6cqi;
   box-shadow: inset 0 2px 14px rgb(0 0 0 / 0.45), 0 14px 40px rgb(0 0 0 / 0.35);
+  transition: background 0.35s ease, border-color 0.35s ease;
 }
 .cell {
   position: relative;
   aspect-ratio: 1;
   border-radius: 0.9cqi;
-  background: #1c2536;
-  border: 1px solid rgb(255 255 255 / 0.03);
+  background: var(--cell-face);
+  border: 1px solid var(--cell-edge);
   display: grid;
   place-items: center;
   overflow: hidden;
   padding: 0;
+  transition: background 0.35s ease;
 }
-.cell--DL { background: color-mix(in srgb, var(--color-sage) 26%, #1c2536); }
-.cell--TL { background: color-mix(in srgb, var(--color-lagoon) 34%, #1c2536); }
-.cell--DW { background: color-mix(in srgb, var(--color-rosewood) 30%, #1c2536); }
-.cell--TW { background: color-mix(in srgb, var(--color-cinnabar) 34%, #1c2536); }
+.cell--DL { background: var(--cell-dl); }
+.cell--TL { background: var(--cell-tl); }
+.cell--DW { background: var(--cell-dw); }
+.cell--TW { background: var(--cell-tw); }
 .cell-label {
   font-size: 1.7cqi;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: rgb(255 255 255 / 0.42);
+  color: var(--cell-ink);
   user-select: none;
 }
-.cell-star { font-size: 3.4cqi; color: var(--color-brass); line-height: 1; }
-.cell--last { box-shadow: 0 0 0 0.35cqi var(--color-brass), 0 0 1.6cqi rgb(201 161 92 / 0.55); }
+.cell-star { font-size: 3.4cqi; color: var(--star); line-height: 1; }
+.cell--last { box-shadow: 0 0 0 0.35cqi var(--color-brass), 0 0 1.6cqi color-mix(in srgb, var(--color-brass) 55%, transparent); }
+/* A legal target lights up while you're holding a tile. */
+.cell--target::after {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border-radius: 0.6cqi;
+  border: 0.35cqi dashed color-mix(in srgb, var(--color-brass) 60%, transparent);
+  animation: targetBreathe 1.6s ease-in-out infinite;
+}
+@keyframes targetBreathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.94); }
+  50% { opacity: 0.85; transform: scale(1); }
+}
 
 /* ── Tiles ── */
 .tile {
   position: absolute;
   inset: 0;
   border-radius: 0.9cqi;
-  background: linear-gradient(165deg, var(--color-ivory), var(--color-ivorydeep));
-  color: var(--color-tiletext);
-  box-shadow: 0 0.5cqi 0 #b99f6e, 0 0.9cqi 1.4cqi rgb(0 0 0 / 0.35);
+  background: linear-gradient(165deg, var(--tile-a), var(--tile-b));
+  color: var(--tile-ink);
+  box-shadow: 0 0.5cqi 0 var(--tile-edge), 0 0.9cqi 1.4cqi rgb(0 0 0 / 0.35);
   display: grid;
   place-items: center;
 }
@@ -103,7 +368,7 @@ body {
 .tile--staged {
   outline: 0.35cqi solid var(--color-brass);
   outline-offset: -0.1cqi;
-  background: linear-gradient(165deg, #fbeed0, var(--color-ivory));
+  background: linear-gradient(165deg, color-mix(in srgb, var(--tile-a) 80%, white), var(--tile-a));
 }
 .tile--shadow {
   background: color-mix(in srgb, var(--color-brass) 22%, transparent);
@@ -118,10 +383,120 @@ body {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 0.8; }
 }
+/* A light sweep across the tiles of the move that just landed. */
+.tile--fresh::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.72) 50%, transparent 65%);
+  animation: sheen 1.1s ease-out 0.15s both;
+  pointer-events: none;
+}
+@keyframes sheen {
+  from { transform: translateX(-120%); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: translateX(120%); opacity: 0; }
+}
+
+/* ── Motion ── */
 .pop { animation: pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1); }
 @keyframes pop {
   0% { transform: scale(0.55); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
+}
+.drop { animation: drop 0.34s cubic-bezier(0.22, 1.35, 0.4, 1) both; }
+@keyframes drop {
+  0% { transform: translateY(-42%) scale(1.18) rotate(-7deg); opacity: 0; }
+  60% { transform: translateY(4%) scale(0.98) rotate(1.5deg); opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+}
+.fade-up { animation: fadeUp 0.4s ease both; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.slide-down { animation: slideDown 0.32s cubic-bezier(0.2, 1.2, 0.4, 1) both; }
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pulse-turn { animation: pulseTurn 1.8s ease-in-out infinite; }
+@keyframes pulseTurn {
+  0%, 100% { box-shadow: 0 0 0 1px var(--color-brass), 0 0 0 rgb(201 161 92 / 0); }
+  50% { box-shadow: 0 0 0 1px var(--color-brass), 0 0 22px color-mix(in srgb, var(--color-brass) 40%, transparent); }
+}
+.shake { animation: shake 0.4s ease; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+.spin { animation: spin 0.7s cubic-bezier(0.3, 0.9, 0.3, 1); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Rack tiles deal in one after another. */
+.deal { animation: deal 0.34s cubic-bezier(0.2, 1.3, 0.4, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+@keyframes deal {
+  from { opacity: 0; transform: translateY(26px) rotate(-8deg) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+}
+
+/* ── Score burst ── */
+.burst { animation: burstIn 0.42s cubic-bezier(0.15, 1.5, 0.4, 1) both; }
+@keyframes burstIn {
+  0% { opacity: 0; transform: scale(0.6) translateY(18px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.burst-number {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1;
+  background: linear-gradient(160deg, var(--color-brasslight), var(--color-brass));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: burstNumber 0.7s cubic-bezier(0.2, 1.6, 0.35, 1) both;
+}
+@keyframes burstNumber {
+  0% { transform: scale(0.35) rotate(-8deg); opacity: 0; }
+  55% { transform: scale(1.14) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.float-away { animation: floatAway 1.5s ease-out both; }
+@keyframes floatAway {
+  0% { opacity: 0; transform: translateY(10px) scale(0.85); }
+  18% { opacity: 1; transform: translateY(0) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-38px) scale(1.02); }
+}
+.confetti {
+  position: absolute;
+  width: 0.6rem;
+  height: 0.9rem;
+  border-radius: 2px;
+  animation: confetti 1.6s cubic-bezier(0.25, 0.7, 0.4, 1) both;
+}
+@keyframes confetti {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.6); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, 120px)) rotate(var(--rot, 420deg)) scale(1); }
+}
+
+/* Bot "thinking" dots. */
+.think-dot {
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: currentColor;
+  animation: thinkDot 1.1s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 0.16s);
+}
+@keyframes thinkDot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-0.22rem); }
 }
 
 /* ── Rack tiles (fixed-size, outside board container) ── */
@@ -130,24 +505,39 @@ body {
   width: 3rem;
   height: 3.3rem;
   border-radius: 0.55rem;
-  background: linear-gradient(165deg, var(--color-ivory), var(--color-ivorydeep));
-  color: var(--color-tiletext);
-  box-shadow: 0 3px 0 #b99f6e, 0 6px 12px rgb(0 0 0 / 0.35);
+  background: linear-gradient(165deg, var(--tile-a), var(--tile-b));
+  color: var(--tile-ink);
+  box-shadow: 0 3px 0 var(--tile-edge), 0 6px 12px rgb(0 0 0 / 0.35);
   display: grid;
   place-items: center;
-  transition: transform 0.12s ease, box-shadow 0.12s ease, outline-color 0.12s ease;
+  transition: transform 0.14s cubic-bezier(0.2, 1.3, 0.4, 1), box-shadow 0.14s ease, outline-color 0.14s ease;
   outline: 3px solid transparent;
 }
 .rtile-letter { font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; transform: translateY(-6%); }
 .rtile-value { position: absolute; right: 0.3rem; bottom: 0.15rem; font-size: 0.62rem; font-weight: 700; }
-.rtile--selected { transform: translateY(-0.55rem); outline-color: var(--color-brass); }
+.rtile--selected {
+  transform: translateY(-0.55rem) scale(1.06);
+  outline-color: var(--color-brass);
+  box-shadow: 0 5px 0 var(--tile-edge), 0 12px 22px rgb(0 0 0 / 0.45);
+}
 .rtile--swap { outline-color: var(--color-cinnabar); transform: translateY(-0.35rem); }
 .rtile--ghost {
-  background: rgb(255 255 255 / 0.05);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
   box-shadow: inset 0 0 0 1px var(--color-line);
   color: transparent;
 }
 .rtile--ghost .rtile-value { color: transparent; }
+
+/* Wordmark / room-code tiles reuse the themed tile face. */
+.wordtile {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: linear-gradient(165deg, var(--tile-a), var(--tile-b));
+  color: var(--tile-ink);
+  box-shadow: 0 4px 0 var(--tile-edge), 0 10px 22px rgb(0 0 0 / 0.4);
+}
 
 /* ── Shared UI ── */
 .card {
@@ -163,26 +553,43 @@ body {
   gap: 0.5rem;
   border-radius: 0.7rem;
   font-weight: 600;
-  transition: transform 0.1s ease, background 0.15s ease, opacity 0.15s ease;
+  transition: transform 0.12s ease, background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
 }
-.btn:active { transform: scale(0.97); }
+.btn:active { transform: scale(0.96); }
 .btn:disabled { opacity: 0.4; pointer-events: none; }
-.btn-brass { background: linear-gradient(160deg, var(--color-brasslight), var(--color-brass)); color: #241a0d; }
-.btn-ghost { background: rgb(255 255 255 / 0.06); color: #e7ecf5; border: 1px solid var(--color-line); }
-.btn-danger { background: color-mix(in srgb, var(--color-cinnabar) 24%, transparent); color: #ffb3aa; border: 1px solid color-mix(in srgb, var(--color-cinnabar) 45%, transparent); }
-
-.pulse-turn { animation: pulseTurn 1.8s ease-in-out infinite; }
-@keyframes pulseTurn {
-  0%, 100% { box-shadow: 0 0 0 1px var(--color-brass), 0 0 0 rgb(201 161 92 / 0); }
-  50% { box-shadow: 0 0 0 1px var(--color-brass), 0 0 22px rgb(201 161 92 / 0.35); }
+.btn-brass {
+  background: linear-gradient(160deg, var(--color-brasslight), var(--color-brass));
+  color: var(--color-onbrass);
+}
+.btn-brass:not(:disabled):hover { box-shadow: 0 6px 20px color-mix(in srgb, var(--color-brass) 40%, transparent); }
+.btn-ghost {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  color: var(--color-text);
+  border: 1px solid var(--color-line);
+}
+.btn-ghost:not(:disabled):hover { background: color-mix(in srgb, var(--color-text) 13%, transparent); }
+.btn-danger {
+  background: color-mix(in srgb, var(--color-cinnabar) 24%, transparent);
+  color: var(--color-dangerink);
+  border: 1px solid color-mix(in srgb, var(--color-cinnabar) 45%, transparent);
 }
 
-.fade-up { animation: fadeUp 0.4s ease both; }
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+.toast {
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-cinnabar) 45%, transparent);
+  background: color-mix(in srgb, var(--color-cinnabar) 18%, var(--color-panel));
+  color: var(--color-dangerink);
+}
+.toast--ok {
+  border-color: color-mix(in srgb, var(--color-sage) 50%, transparent);
+  background: color-mix(in srgb, var(--color-sage) 18%, var(--color-panel));
+  color: color-mix(in srgb, var(--color-sage) 75%, var(--color-text));
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pop, .fade-up, .pulse-turn { animation: none; }
+  .pop, .fade-up, .pulse-turn, .drop, .slide-down, .deal, .burst, .burst-number,
+  .float-away, .confetti, .think-dot, .shake, .spin, .tile--shadow,
+  .tile--fresh::before, .cell--target::after {
+    animation: none;
+  }
 }
