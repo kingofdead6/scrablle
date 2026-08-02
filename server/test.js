@@ -1,5 +1,8 @@
 // Quick engine sanity tests: node test.js
-import { createGame, startGame, applyMove, validateMove, publicState } from './game.js';
+import {
+  createGame, startGame, applyMove, validateMove, publicState, passTurn, leavePlayer,
+} from './game.js';
+import { chooseBotTurn, warmBotDictionary } from './bot.js';
 
 let failures = 0;
 const assert = (cond, msg) => {
@@ -90,6 +93,76 @@ assert(!!res.error, `playing a tile you don't hold is rejected (${res.error})`);
 const pub = publicState(game, 'TEST');
 assert(pub.players.every(p => p.rack === undefined && typeof p.rackCount === 'number'),
   'public state exposes rackCount only');
+
+// ── Leaving mid-game ──
+{
+  const g = createGame();
+  g.players.push(
+    { id: 'a', name: 'A', rack: [], score: 0, connected: true },
+    { id: 'b', name: 'B', rack: [], score: 0, connected: true },
+    { id: 'c', name: 'C', rack: [], score: 0, connected: true },
+  );
+  startGame(g);
+  g.turn = 1;
+  const bagBefore = g.bag.length;
+  const tiles = g.players[1].rack.length;
+  leavePlayer(g, 1);
+  assert(g.players[1].left === true, 'leaving mid-game marks the seat as gone');
+  assert(g.bag.length === bagBefore + tiles, 'the leaver returns their tiles to the bag');
+  assert(g.turn !== 1, 'the turn moves off the seat that just left');
+  assert(g.status === 'playing', 'the game continues with two players left');
+
+  passTurn(g, g.turn);
+  assert(g.turn !== 1, 'turn order skips the empty seat');
+
+  leavePlayer(g, 2);
+  assert(g.status === 'ended', 'the game ends when only one player is left');
+  assert(!g.winners.includes('C'), 'a player who left cannot win');
+}
+
+// ── Lobby leave frees the seat entirely ──
+{
+  const g = createGame();
+  g.players.push(
+    { id: 'a', name: 'A', rack: [], score: 0, connected: true },
+    { id: 'b', name: 'B', rack: [], score: 0, connected: true },
+  );
+  leavePlayer(g, 0);
+  assert(g.players.length === 1 && g.players[0].name === 'B', 'leaving the lobby removes the seat');
+}
+
+// ── Bots ──
+{
+  warmBotDictionary();
+  const g = createGame();
+  g.players.push(
+    { id: 'h', name: 'Human', rack: [], score: 0, connected: true },
+    { id: 'x', name: 'Ada', rack: [], score: 0, connected: true, isBot: true, difficulty: 'hard' },
+  );
+  startGame(g);
+  g.turn = 1;
+
+  const opening = chooseBotTurn(g, 1);
+  assert(opening.type === 'play', `a bot finds an opening play (got ${opening.type})`);
+  assert(opening.placements.some(p => p.row === 7 && p.col === 7), 'the opening play covers the center star');
+  assert(!applyMove(g, 1, opening.placements).error, 'the engine accepts the opening play');
+
+  // 40 more bot turns on a live board — every one has to be legal.
+  let illegal = 0, plays = 0;
+  for (let i = 0; i < 40 && g.status === 'playing'; i++) {
+    const idx = g.turn;
+    const turn = chooseBotTurn(g, idx);
+    if (turn.type !== 'play') { passTurn(g, idx); continue; }
+    plays++;
+    if (applyMove(g, idx, turn.placements).error) illegal++;
+  }
+  assert(illegal === 0, `every generated bot play is legal (${plays} plays, ${illegal} rejected)`);
+
+  const empty = createGame();
+  empty.players.push({ id: 'z', name: 'Zed', rack: ['Q'], score: 0, connected: true, isBot: true, difficulty: 'hard' });
+  empty.bag = [];
+  assert(chooseBotTurn(empty, 0).type === 'pass', 'a stuck bot with an empty bag passes');
+}
 
 console.log(failures === 0 ? '\nAll tests passed.' : `\n${failures} test(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

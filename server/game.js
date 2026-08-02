@@ -6,8 +6,10 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORDLIST_PATH = join(__dirname, 'node_modules', 'an-array-of-english-words', 'index.json');
-const DICTIONARY = new Set(
-  JSON.parse(readFileSync(WORDLIST_PATH, 'utf8')).map((w) => w.toUpperCase())
+export const DICTIONARY = new Set(
+  JSON.parse(readFileSync(WORDLIST_PATH, 'utf8'))
+    .map((w) => w.toUpperCase())
+    .filter((w) => /^[A-Z]{1,15}$/.test(w))
 );
 
 export const LETTER_VALUES = {
@@ -39,15 +41,19 @@ for (const [r, c] of DL) BONUS[r][c] = 'DL';
 const RACK_SIZE = 7;
 const inBounds = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
 
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function shuffledBag() {
   const bag = [];
   for (const [letter, count] of Object.entries(TILE_COUNTS))
     for (let i = 0; i < count; i++) bag.push(letter);
-  for (let i = bag.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [bag[i], bag[j]] = [bag[j], bag[i]];
-  }
-  return bag;
+  return shuffleInPlace(bag);
 }
 
 export const TURN_SECONDS_OPTIONS = [30, 60, 90, 120, 180, 0]; // 0 = no limit
@@ -56,7 +62,8 @@ export function createGame() {
   return {
     board: Array.from({ length: 15 }, () => Array(15).fill(null)),
     bag: shuffledBag(),
-    players: [], // { id, name, rack: [], score, connected, socketId }
+    // { id, name, rack: [], score, connected, socketId, isBot, difficulty, left }
+    players: [],
     turn: 0,
     status: 'lobby', // lobby | playing | ended
     firstMoveDone: false,
@@ -66,6 +73,7 @@ export function createGame() {
     turnSeconds: 90,  // per-turn time limit chosen by host; 0 = no limit
     turnEndsAt: null, // epoch ms when the current turn auto-passes
     preview: null,    // { playerIdx, cells: [{row, col, letter, isBlank}] } shadow tiles
+    thinking: null,   // { playerIdx, name } while a bot works out its move
   };
 }
 
@@ -76,7 +84,18 @@ export function setTurnSeconds(game, seconds) {
   return { ok: true };
 }
 
+// Seats that are still in the game (a player who used "Leave game" is not).
+export const activePlayers = (game) => game.players.filter((p) => !p.left);
+export const humanPlayers = (game) => game.players.filter((p) => !p.left && !p.isBot);
+
+// Drop players who walked out, so a rematch starts from a clean table.
+export function purgeLeftPlayers(game) {
+  game.players = game.players.filter((p) => !p.left);
+  if (game.turn >= game.players.length) game.turn = 0;
+}
+
 export function startGame(game) {
+  purgeLeftPlayers(game);
   game.status = 'playing';
   game.firstMoveDone = false;
   game.scorelessTurns = 0;
@@ -86,6 +105,7 @@ export function startGame(game) {
   game.board = Array.from({ length: 15 }, () => Array(15).fill(null));
   game.turn = Math.floor(Math.random() * game.players.length);
   game.preview = null;
+  game.thinking = null;
   for (const p of game.players) {
     p.score = 0;
     p.rack = [];
@@ -286,7 +306,7 @@ export function passTurn(game, playerIdx) {
   const player = game.players[playerIdx];
   game.lastMove = { playerName: player.name, type: 'pass' };
   game.scorelessTurns++;
-  if (game.scorelessTurns >= game.players.length * 2) finishGame(game, null);
+  if (game.scorelessTurns >= activePlayers(game).length * 2) finishGame(game, null);
   else nextTurn(game);
   return { ok: true };
 }
@@ -308,21 +328,56 @@ export function swapTiles(game, playerIdx, letters) {
   for (const l of letters) player.rack.splice(player.rack.indexOf(l), 1);
   drawTiles(game, player);
   game.bag.push(...letters);
-  for (let i = game.bag.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [game.bag[i], game.bag[j]] = [game.bag[j], game.bag[i]];
-  }
+  shuffleInPlace(game.bag);
   game.lastMove = { playerName: player.name, type: 'swap', count: letters.length };
   game.scorelessTurns++;
-  if (game.scorelessTurns >= game.players.length * 2) finishGame(game, null);
+  if (game.scorelessTurns >= activePlayers(game).length * 2) finishGame(game, null);
   else nextTurn(game);
   return { ok: true };
 }
 
 function nextTurn(game) {
-  game.turn = (game.turn + 1) % game.players.length;
+  const n = game.players.length;
+  let t = game.turn;
+  for (let i = 0; i < n; i++) {
+    t = (t + 1) % n;
+    if (!game.players[t].left) break;
+  }
+  game.turn = t;
   game.preview = null;
   resetTurnClock(game);
+}
+
+// A player walks out. In the lobby the seat disappears; mid-game the seat is
+// marked as gone, its tiles go back to the bag, and turns skip it from now on.
+export function leavePlayer(game, playerIdx) {
+  const player = game.players[playerIdx];
+  if (!player || player.left) return { error: 'That seat is already empty.' };
+
+  if (game.status === 'lobby') {
+    game.players.splice(playerIdx, 1);
+    if (game.turn >= game.players.length) game.turn = 0;
+    return { ok: true, removed: true };
+  }
+
+  player.left = true;
+  player.connected = false;
+  player.socketId = null;
+  game.bag.push(...player.rack);
+  player.rack = [];
+  shuffleInPlace(game.bag);
+  if (game.preview?.playerIdx === playerIdx) game.preview = null;
+
+  if (game.status === 'playing') {
+    game.lastMove = { playerName: player.name, type: 'leave' };
+    // No game left to play if fewer than two seats remain, or only bots do.
+    if (activePlayers(game).length < 2 || humanPlayers(game).length === 0) {
+      finishGame(game, null);
+    } else if (game.turn === playerIdx) {
+      nextTurn(game);
+    }
+  }
+  return { ok: true };
 }
 
 export function setPreview(game, playerIdx, placements) {
@@ -353,8 +408,10 @@ function finishGame(game, outPlayerIdx) {
       p.score -= leftover[i];
     }
   });
-  const best = Math.max(...game.players.map(p => p.score));
-  game.winners = game.players.filter(p => p.score === best).map(p => p.name);
+  const standing = activePlayers(game);
+  const pool = standing.length > 0 ? standing : game.players;
+  const best = Math.max(...pool.map(p => p.score));
+  game.winners = pool.filter(p => p.score === best).map(p => p.name);
   game.status = 'ended';
   game.preview = null;
   game.turnEndsAt = null;
@@ -372,6 +429,9 @@ export function publicState(game, code) {
       score: p.score,
       rackCount: p.rack.length,
       connected: p.connected,
+      isBot: !!p.isBot,
+      difficulty: p.isBot ? p.difficulty : undefined,
+      left: !!p.left,
     })),
     turn: game.turn,
     bagCount: game.bag.length,
@@ -380,5 +440,6 @@ export function publicState(game, code) {
     turnSeconds: game.turnSeconds,
     turnEndsAt: game.turnEndsAt,
     preview: game.preview,
+    thinking: game.thinking,
   };
 }

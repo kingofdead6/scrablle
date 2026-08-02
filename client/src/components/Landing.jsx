@@ -1,8 +1,8 @@
 import { useState } from 'react';
 
-function WordmarkTile({ ch }) {
+function WordmarkTile({ ch, i }) {
   return (
-    <span className="relative inline-grid h-11 w-10 place-items-center rounded-lg bg-gradient-to-br from-ivory to-ivorydeep text-tiletext shadow-[0_3px_0_#b99f6e,0_6px_14px_rgb(0_0_0/0.4)]">
+    <span className="wordtile deal h-11 w-10" style={{ '--i': i }}>
       <span className="font-display text-2xl font-bold">{ch}</span>
     </span>
   );
@@ -23,14 +23,14 @@ export default function Landing({ connected, onHost, onJoin, error }) {
     <div className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center gap-8 px-5 py-10">
       <header className="fade-up flex flex-col items-center gap-4 text-center">
         <div className="flex gap-1.5">
-          {'LIVE'.split('').map((ch, i) => <WordmarkTile key={i} ch={ch} />)}
+          {'LIVE'.split('').map((ch, i) => <WordmarkTile key={i} ch={ch} i={i} />)}
         </div>
         <h1 className="font-display text-4xl font-semibold tracking-tight text-ivory">
           Scrabble Live
         </h1>
         <p className="max-w-xs text-sm text-mist">
-          One screen is the board. Up to four phones are the racks.
-          Every move lands on every device instantly.
+          One screen is the board. Up to four phones are the racks — or fill
+          the empty seats with bots. Every move lands on every device instantly.
         </p>
         <span className="flex items-center gap-2 text-xs text-mist">
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-sage' : 'bg-cinnabar'}`} />
@@ -82,7 +82,7 @@ export default function Landing({ connected, onHost, onJoin, error }) {
         </section>
 
         {error && (
-          <p className="rounded-lg border border-cinnabar/40 bg-cinnabar/15 px-4 py-2.5 text-center text-sm text-[#ffb3aa]">
+          <p className="shake rounded-lg border border-cinnabar/40 bg-cinnabar/15 px-4 py-2.5 text-center text-sm text-dangerink">
             {error}
           </p>
         )}

@@ -6,12 +6,14 @@ import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 import {
   createGame, startGame, applyMove, passTurn, swapTiles, publicState,
-  setTurnSeconds, setPreview,
+  setTurnSeconds, setPreview, leavePlayer, purgeLeftPlayers, humanPlayers,
 } from './game.js';
+import { chooseBotTurn, warmBotDictionary, pickBotName, BOT_DIFFICULTIES } from './bot.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const MAX_PLAYERS = 4; // + 1 host screen = 5 devices
+const MAX_BOTS = 3;    // so a solo human can still fill the table
 
 const app = express();
 const server = http.createServer(app);
@@ -49,11 +51,60 @@ function broadcast(room) {
   }
 }
 
+// ─── Bots ─────────────────────────────────────────────────────────────────────
+// Bots think on a timer so their moves feel played rather than teleported in.
+const BOT_THINK_MS = [900, 2100];
+
+function scheduleBotTurn(room) {
+  const game = room.game;
+  if (room.botTimer || game.status !== 'playing') return;
+  const bot = game.players[game.turn];
+  if (!bot?.isBot || bot.left) return;
+
+  game.thinking = { playerIdx: game.turn, name: bot.name };
+  io.to(room.code).emit('state', publicState(game, room.code));
+
+  const [min, max] = BOT_THINK_MS;
+  room.botTimer = setTimeout(() => {
+    room.botTimer = null;
+    if (rooms.get(room.code) !== room || game.status !== 'playing') return;
+    const idx = game.turn;
+    const current = game.players[idx];
+    if (!current?.isBot || current.left) { game.thinking = null; return; }
+
+    // Whatever happens, the bot's turn has to end — otherwise the table stalls.
+    try {
+      const turn = chooseBotTurn(game, idx);
+      const result =
+        turn.type === 'play' ? applyMove(game, idx, turn.placements)
+        : turn.type === 'swap' ? swapTiles(game, idx, turn.letters)
+        : { error: 'pass' };
+      if (result.error) passTurn(game, idx);
+    } catch (err) {
+      console.error('Bot turn failed:', err);
+      passTurn(game, idx);
+    }
+
+    game.thinking = null;
+    broadcast(room);
+    scheduleBotTurn(room); // the next seat may be a bot too
+  }, min + Math.random() * (max - min));
+}
+
+function cancelBotTurn(room) {
+  clearTimeout(room.botTimer);
+  room.botTimer = null;
+  room.game.thinking = null;
+}
+
 // Drop rooms with no activity for 2 hours
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
-    if (now - room.lastActivity > 2 * 60 * 60 * 1000) rooms.delete(code);
+    if (now - room.lastActivity > 2 * 60 * 60 * 1000) {
+      cancelBotTurn(room);
+      rooms.delete(code);
+    }
   }
 }, 10 * 60 * 1000);
 
@@ -64,8 +115,10 @@ setInterval(() => {
     const { game } = room;
     if (game.status !== 'playing' || !game.turnEndsAt) continue;
     if (now < game.turnEndsAt) continue;
+    cancelBotTurn(room);
     passTurn(game, game.turn);
     broadcast(room);
+    scheduleBotTurn(room);
   }
 }, 1000);
 
@@ -129,7 +182,52 @@ io.on('connection', (socket) => {
     if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can start.' });
     if (room.game.status !== 'lobby') return cb?.({ error: 'Game already started.' });
     if (room.game.players.length < 2) return cb?.({ error: 'Need at least 2 players.' });
+    if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
     startGame(room.game);
+    cb?.({ ok: true });
+    broadcast(room);
+    scheduleBotTurn(room);
+  });
+
+  // ── Bots ──
+  socket.on('host:addBot', ({ difficulty } = {}, cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can add bots.' });
+    if (room.game.status !== 'lobby') return cb?.({ error: 'Add bots before starting the game.' });
+    if (room.game.players.length >= MAX_PLAYERS) return cb?.({ error: 'The table is full (4 players max).' });
+    if (room.game.players.filter((p) => p.isBot).length >= MAX_BOTS)
+      return cb?.({ error: `Up to ${MAX_BOTS} bots per game.` });
+
+    const level = BOT_DIFFICULTIES.includes(difficulty) ? difficulty : 'medium';
+    const name = pickBotName(room.game.players.map((p) => p.name));
+    room.game.players.push({
+      id: uid(), name, rack: [], score: 0, connected: true, socketId: null,
+      isBot: true, difficulty: level,
+    });
+    // First bot in the room pays for the prefix index; do it off the event loop.
+    setImmediate(warmBotDictionary);
+    cb?.({ ok: true });
+    broadcast(room);
+  });
+
+  socket.on('host:removeBot', ({ id }, cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can remove bots.' });
+    if (room.game.status !== 'lobby') return cb?.({ error: 'Bots can only be removed in the lobby.' });
+    const idx = room.game.players.findIndex((p) => p.id === id && p.isBot);
+    if (idx === -1) return cb?.({ error: 'That bot is not at the table.' });
+    room.game.players.splice(idx, 1);
+    cb?.({ ok: true });
+    broadcast(room);
+  });
+
+  socket.on('host:setBotDifficulty', ({ id, difficulty }, cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can change bots.' });
+    if (!BOT_DIFFICULTIES.includes(difficulty)) return cb?.({ error: 'Unknown difficulty.' });
+    const bot = room.game.players.find((p) => p.id === id && p.isBot);
+    if (!bot) return cb?.({ error: 'That bot is not at the table.' });
+    bot.difficulty = difficulty;
     cb?.({ ok: true });
     broadcast(room);
   });
@@ -148,9 +246,42 @@ io.on('connection', (socket) => {
     const room = findRoom();
     if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can restart.' });
     if (room.game.status !== 'ended') return cb?.({ error: 'The game is still in progress.' });
+    cancelBotTurn(room);
+    purgeLeftPlayers(room.game);
+    if (room.game.players.length < 2) return cb?.({ error: 'Not enough players left for a rematch.' });
+    if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
     startGame(room.game);
     cb?.({ ok: true });
     broadcast(room);
+    scheduleBotTurn(room);
+  });
+
+  // Re-send the current state to whoever asked (the in-game refresh button).
+  socket.on('client:refresh', (cb) => {
+    const room = findRoom();
+    if (!room) return cb?.({ error: 'Room not found.' });
+    touch(room);
+    socket.emit('state', publicState(room.game, room.code));
+    const player = findPlayer(room);
+    if (player) socket.emit('rack', player.rack);
+    cb?.({ ok: true });
+  });
+
+  // Give up your seat. In the lobby it frees the slot; mid-game the turn order
+  // closes over you and your tiles go back to the bag.
+  socket.on('player:leave', (cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'player') return cb?.({ error: 'You are not seated in a game.' });
+    const player = findPlayer(room);
+    if (!player) return cb?.({ error: 'You are not seated in a game.' });
+    cancelBotTurn(room);
+    const result = leavePlayer(room.game, room.game.players.indexOf(player));
+    if (result.error) return cb?.(result);
+    socket.leave(room.code);
+    socket.data = {};
+    cb?.({ ok: true });
+    broadcast(room);
+    scheduleBotTurn(room);
   });
 
   const guardTurn = (cb) => {
@@ -169,8 +300,11 @@ io.on('connection', (socket) => {
     if (!ctx) return;
     const result = applyMove(ctx.room.game, ctx.idx, placements);
     if (result.error) return cb?.(result);
-    cb?.({ ok: true });
+    // Hand the breakdown back so the player sees what the word was worth.
+    const scored = ctx.room.game.lastMove;
+    cb?.({ ok: true, score: scored.score, words: scored.words, bingo: scored.bingo });
     broadcast(ctx.room);
+    scheduleBotTurn(ctx.room);
   });
 
   socket.on('player:pass', (cb) => {
@@ -179,6 +313,7 @@ io.on('connection', (socket) => {
     passTurn(ctx.room.game, ctx.idx);
     cb?.({ ok: true });
     broadcast(ctx.room);
+    scheduleBotTurn(ctx.room);
   });
 
   socket.on('player:swap', ({ letters }, cb) => {
@@ -188,6 +323,7 @@ io.on('connection', (socket) => {
     if (result.error) return cb?.(result);
     cb?.({ ok: true });
     broadcast(ctx.room);
+    scheduleBotTurn(ctx.room);
   });
 
   // Live "shadow tile" preview of tiles a player has staged but not yet submitted.
@@ -200,6 +336,17 @@ io.on('connection', (socket) => {
     if (room.game.turn !== idx) return;
     setPreview(room.game, idx, placements);
     broadcast(room);
+  });
+
+  socket.on('host:close', (cb) => {
+    const room = findRoom();
+    if (!room || socket.data.role !== 'host') return cb?.({ error: 'Only the host can close the room.' });
+    cancelBotTurn(room);
+    io.to(room.code).emit('room:closed');
+    rooms.delete(room.code);
+    socket.leave(room.code);
+    socket.data = {};
+    cb?.({ ok: true });
   });
 
   socket.on('disconnect', () => {

@@ -3,6 +3,7 @@ import { socket } from './socket';
 import Landing from './components/Landing';
 import HostView from './components/HostView';
 import PlayerView from './components/PlayerView';
+import { useTheme } from './components/ThemePicker';
 
 const SKEY = 'scrabble-live-session';
 const loadSession = () => {
@@ -15,11 +16,19 @@ export default function App() {
   const [state, setState] = useState(null);
   const [rack, setRack] = useState([]);
   const [landingError, setLandingError] = useState('');
+  const [theme, setTheme] = useTheme();
 
   const setSession = (s) => {
     setSessionState(s);
     if (s) localStorage.setItem(SKEY, JSON.stringify(s));
     else localStorage.removeItem(SKEY);
+  };
+
+  const clearSession = (message = '') => {
+    setSession(null);
+    setState(null);
+    setRack([]);
+    setLandingError(message);
   };
 
   useEffect(() => {
@@ -28,22 +37,20 @@ export default function App() {
       const s = loadSession();
       if (s?.code) {
         socket.emit('rejoin', s, (res) => {
-          if (res?.error) {
-            setSession(null);
-            setState(null);
-            setRack([]);
-          }
+          if (res?.error) clearSession();
         });
       }
     };
     const onDisconnect = () => setConnected(false);
     const onState = (st) => setState(st);
     const onRack = (r) => setRack(r);
+    const onClosed = () => clearSession('The host closed the room.');
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('state', onState);
     socket.on('rack', onRack);
+    socket.on('room:closed', onClosed);
     if (socket.connected) onConnect();
 
     return () => {
@@ -51,6 +58,7 @@ export default function App() {
       socket.off('disconnect', onDisconnect);
       socket.off('state', onState);
       socket.off('rack', onRack);
+      socket.off('room:closed', onClosed);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,12 +81,16 @@ export default function App() {
     });
   };
 
+  // Players give up their seat properly so turn order closes over them; the
+  // host tears the room down for everyone.
   const handleLeave = () => {
-    setSession(null);
-    setState(null);
-    setRack([]);
-    socket.disconnect(); // frees the seat server-side
-    socket.connect();
+    const role = session?.role;
+    if (!socket.connected) {
+      clearSession();
+      return;
+    }
+    if (role === 'host') socket.emit('host:close', () => clearSession());
+    else socket.emit('player:leave', () => clearSession());
   };
 
   if (!session)
@@ -87,10 +99,11 @@ export default function App() {
   if (!state)
     return (
       <div className="grid min-h-dvh place-items-center text-sm text-mist">
-        {connected ? 'Rejoining your game…' : 'Reconnecting to server…'}
+        <span className="fade-up">{connected ? 'Rejoining your game…' : 'Reconnecting to server…'}</span>
       </div>
     );
 
-  if (session.role === 'host') return <HostView state={state} onLeave={handleLeave} />;
-  return <PlayerView state={state} rack={rack} me={session.playerId} onLeave={handleLeave} />;
+  const themeProps = { theme, onTheme: setTheme };
+  if (session.role === 'host') return <HostView state={state} onLeave={handleLeave} {...themeProps} />;
+  return <PlayerView state={state} rack={rack} me={session.playerId} onLeave={handleLeave} {...themeProps} />;
 }

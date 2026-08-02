@@ -1,6 +1,7 @@
 // End-to-end socket test: node itest.js  (starts its own server on :3999)
 import { io } from 'socket.io-client';
 import { spawn } from 'child_process';
+import { DICTIONARY } from './game.js';
 
 const PORT = 3999;
 const URL = `http://localhost:${PORT}`;
@@ -12,6 +13,19 @@ const assert = (cond, msg) => {
 const emit = (sock, ev, payload) =>
   new Promise((res) => (payload !== undefined ? sock.emit(ev, payload, res) : sock.emit(ev, res)));
 const once = (sock, ev) => new Promise((res) => sock.once(ev, res));
+// Broadcasts fan out to every socket, so `once` can catch an earlier one that
+// was still in flight. Wait for the payload we actually care about.
+const waitFor = (sock, ev, pred, ms = 5000) =>
+  new Promise((res) => {
+    const timer = setTimeout(() => { sock.off(ev, handler); res(null); }, ms);
+    const handler = (payload) => {
+      if (!pred(payload)) return;
+      clearTimeout(timer);
+      sock.off(ev, handler);
+      res(payload);
+    };
+    sock.on(ev, handler);
+  });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const server = spawn('node', ['index.js'], { env: { ...process.env, PORT }, stdio: 'inherit' });
@@ -47,26 +61,68 @@ try {
   assert(st.status === 'playing' && st.bagCount === 100 - 14, `bag has ${st.bagCount} after dealing`);
   assert(st.players.every((p) => p.rack === undefined), 'broadcast state never leaks racks');
 
-  // First move by whoever has the turn: play their first two tiles at center
+  // First move by whoever has the turn. The engine enforces a dictionary, so
+  // pick a real two-letter word the rack can actually spell.
   const racks = { 0: rack1, 1: rack2 };
   const socks = { 0: p1, 1: p2 };
   const mover = st.turn;
-  const r = racks[mover];
-  const mk = (t, row, col) =>
-    t === '_' ? { row, col, letter: 'E', isBlank: true } : { row, col, letter: t };
-  const placements = [mk(r[0], 7, 7), mk(r[1], 7, 8)];
+  const twoLetterPlay = (rack) => {
+    const options = (t) => (t === '_' ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('') : [t]);
+    for (let i = 0; i < rack.length; i++) {
+      for (let j = 0; j < rack.length; j++) {
+        if (i === j) continue;
+        for (const a of options(rack[i])) {
+          for (const b of options(rack[j])) {
+            if (!DICTIONARY.has(a + b)) continue;
+            return [
+              { row: 7, col: 7, letter: a, isBlank: rack[i] === '_' },
+              { row: 7, col: 8, letter: b, isBlank: rack[j] === '_' },
+            ];
+          }
+        }
+      }
+    }
+    return null;
+  };
+  const placements = twoLetterPlay(racks[mover]);
+  assert(placements !== null, `found a legal opening word for rack ${racks[mover].join('')}`);
 
   const wrongTurn = await emit(socks[1 - mover], 'player:move', { placements });
   assert(!!wrongTurn.error, `out-of-turn move rejected (${wrongTurn.error})`);
 
-  const nextState = once(host, 'state');
+  // Same tiles, reversed — if that spelling isn't a word the engine must say so.
+  const reversed = [
+    { ...placements[0], letter: placements[1].letter, isBlank: placements[1].isBlank },
+    { ...placements[1], letter: placements[0].letter, isBlank: placements[0].isBlank },
+  ];
+  const reversedWord = reversed[0].letter + reversed[1].letter;
+  if (!DICTIONARY.has(reversedWord)) {
+    const notAWord = await emit(socks[mover], 'player:move', { placements: reversed });
+    assert(/not a valid word/i.test(notAWord.error || ''), `non-word ${reversedWord} rejected (${notAWord.error})`);
+  }
+
+  const nextState = waitFor(host, 'state', (st) => !!st.board[7][7]);
   const moved = await emit(socks[mover], 'player:move', { placements });
   assert(moved.ok, 'first move accepted');
+  assert(typeof moved.score === 'number' && moved.score > 0,
+    `the move result reports its score (${moved.score})`);
+  assert(Array.isArray(moved.words) && moved.words[0]?.word.length === 2 &&
+    typeof moved.words[0].score === 'number',
+    `the move result breaks down each word (${moved.words?.map(w => `${w.word} ${w.score}`).join(', ')})`);
   const st2 = await nextState;
   assert(st2.board[7][7] && st2.board[7][8], 'tiles landed on the broadcast board');
-  assert(st2.players[mover].score > 0, `mover scored ${st2.players[mover].score}`);
+  assert(st2.players[mover].score === moved.score, 'the reported score matches the scoreboard');
   assert(st2.turn === 1 - mover, 'turn passed to the other player');
   assert(st2.lastMove.type === 'play' && st2.lastMove.cells.length === 2, 'lastMove broadcast for host effects');
+
+  // Refresh pulls a fresh state + rack for whoever asks
+  const refreshedState = once(socks[mover], 'state');
+  const refreshedRack = once(socks[mover], 'rack');
+  const refreshed = await emit(socks[mover], 'client:refresh');
+  assert(refreshed.ok, 'refresh acknowledged');
+  const [rst, rrack] = await Promise.all([refreshedState, refreshedRack]);
+  assert(rst.code === created.code && rst.board[7][7], 'refresh returns the current board');
+  assert(Array.isArray(rrack) && rrack.length === 7, 'refresh returns the private rack');
 
   // Pass, then the mover swaps 2 tiles on their next turn
   const rackAfterPassP = once(socks[mover], 'rack');
@@ -85,6 +141,78 @@ try {
   assert(re.ok && re.role === 'player', 'disconnected player rejoined and reclaimed seat');
   const rackBack = await once(p1b, 'rack');
   assert(Array.isArray(rackBack) && rackBack.length > 0, 'rejoined player received their rack');
+
+  // ── Leaving mid-game frees the turn order ──
+  const afterLeave = waitFor(host, 'state', (st) => st.players.some((p) => p.name === 'Amine' && p.left));
+  const leftRes = await emit(p2, 'player:leave');
+  assert(leftRes.ok, 'player left the running game');
+  const stLeft = await afterLeave;
+  assert(stLeft !== null, 'the empty seat is broadcast as left');
+  assert(stLeft?.status === 'ended', 'the game ends once only one player remains');
+
+  // ── A solo human against three bots ──
+  const host2 = io(URL);
+  const solo = io(URL);
+  const room2 = await emit(host2, 'host:create');
+  await emit(solo, 'player:join', { code: room2.code, name: 'Solo' });
+
+  const soloOnly = await emit(host2, 'host:start');
+  assert(!!soloOnly.error, `one player cannot start alone (${soloOnly.error})`);
+
+  for (const level of ['easy', 'medium', 'hard']) {
+    const added = await emit(host2, 'host:addBot', { difficulty: level });
+    assert(added.ok, `added a ${level} bot`);
+  }
+  const overflow = await emit(host2, 'host:addBot', { difficulty: 'hard' });
+  assert(!!overflow.error, `a fourth bot is refused (${overflow.error})`);
+
+  const lobbyStateP = waitFor(host2, 'state', (st) => st.players.length === 4);
+  await emit(host2, 'client:refresh');
+  const lobbyState = await lobbyStateP;
+  assert(lobbyState.players.length === 4 && lobbyState.players.filter((p) => p.isBot).length === 3,
+    'table is one human plus three bots');
+  assert(lobbyState.players.filter((p) => p.isBot).every((p) => p.difficulty),
+    'bot difficulty is visible in the public state');
+
+  const botId = lobbyState.players.find((p) => p.isBot).id;
+  await emit(host2, 'host:setBotDifficulty', { id: botId, difficulty: 'easy' });
+  await emit(host2, 'host:setTimer', { seconds: 0 }); // no clock — turns only move when someone acts
+
+  let soloRack = [];
+  solo.on('rack', (r) => { soloRack = r; });
+  const started2 = await emit(host2, 'host:start');
+  assert(started2.ok, 'game started with three bots');
+  await sleep(300);
+  assert(soloRack.length === 7, `the human was dealt a rack (got ${soloRack.length})`);
+
+  // Bots think for a second or two each. The human passes whenever the turn
+  // reaches them, so the table keeps moving without a clock.
+  let live = null;
+  const humanIdx = () => live.players.findIndex((p) => !p.isBot);
+  host2.on('state', (st) => { live = st; });
+  const seedP = waitFor(host2, 'state', (st) => st.status === 'playing');
+  await emit(host2, 'client:refresh');
+  await seedP;
+  for (let i = 0; i < 10 && live.status === 'playing'; i++) {
+    if (live.turn === humanIdx()) await emit(solo, 'player:pass');
+    await sleep(2000);
+  }
+  const botState = live;
+  const tilesDown = botState.board.flat().filter(Boolean).length;
+  const botScores = botState.players.filter((p) => p.isBot).map((p) => p.score);
+  assert(tilesDown > 0, `bots played on their own (${tilesDown} tiles on the board)`);
+  assert(botScores.some((s) => s > 0), `bots are scoring (${botScores.join(', ')})`);
+  assert(botState.players.filter((p) => p.isBot).every((p) => p.rackCount > 0),
+    'bots keep a full rack between turns');
+
+  // ── Closing the room evicts everyone ──
+  const closedP = once(solo, 'room:closed');
+  const closed = await emit(host2, 'host:close');
+  assert(closed.ok, 'host closed the room');
+  await closedP;
+  assert(true, 'players are told the room closed');
+  const gone = await emit(io(URL), 'player:join', { code: room2.code, name: 'Late' });
+  assert(!!gone.error, `a closed room cannot be joined (${gone.error})`);
 
   console.log(failures === 0 ? '\nIntegration: all passed.' : `\nIntegration: ${failures} FAILED.`);
 } finally {
