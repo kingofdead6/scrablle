@@ -4,6 +4,7 @@ import Landing from './components/Landing';
 import HostView from './components/HostView';
 import PlayerView from './components/PlayerView';
 import { useTheme } from './components/ThemePicker';
+import { useChat } from './components/Chat';
 
 const SKEY = 'scrabble-live-session';
 const loadSession = () => {
@@ -17,6 +18,7 @@ export default function App() {
   const [rack, setRack] = useState([]);
   const [landingError, setLandingError] = useState('');
   const [theme, setTheme] = useTheme();
+  const chat = useChat();
 
   const setSession = (s) => {
     setSessionState(s);
@@ -29,6 +31,7 @@ export default function App() {
     setState(null);
     setRack([]);
     setLandingError(message);
+    chat.clear();
   };
 
   useEffect(() => {
@@ -103,7 +106,7 @@ export default function App() {
       </div>
     );
 
-  const themeProps = { theme, onTheme: setTheme };
-  if (session.role === 'host') return <HostView state={state} onLeave={handleLeave} {...themeProps} />;
-  return <PlayerView state={state} rack={rack} me={session.playerId} onLeave={handleLeave} {...themeProps} />;
+  const shared = { theme, onTheme: setTheme, chat };
+  if (session.role === 'host') return <HostView state={state} onLeave={handleLeave} {...shared} />;
+  return <PlayerView state={state} rack={rack} me={session.playerId} onLeave={handleLeave} {...shared} />;
 }

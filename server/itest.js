@@ -50,6 +50,49 @@ try {
   const dup = await emit(io(URL), 'player:join', { code: created.code, name: 'youcef' });
   assert(!!dup.error, `duplicate name rejected (${dup.error})`);
 
+  // ── Chat ──
+  // Everyone in the room hears every message, including the sender.
+  const heard = { host: [], p1: [], p2: [] };
+  host.on('chat:new', (m) => heard.host.push(m));
+  p1.on('chat:new', (m) => heard.p1.push(m));
+  p2.on('chat:new', (m) => heard.p2.push(m));
+
+  // Both joins happened before these listeners existed, so the backlog has to
+  // come from the history the server hands out on demand.
+  const historyP = once(p1, 'chat:history');
+  await emit(p1, 'client:refresh');
+  const backlog = await historyP;
+  assert(Array.isArray(backlog), 'clients can pull the chat history');
+  assert(backlog.some((m) => m.kind === 'system' && /Youcef joined/.test(m.text)) &&
+    backlog.some((m) => m.kind === 'system' && /Amine joined/.test(m.text)),
+    'the history carries the joins that happened before you looked');
+
+  const sent = await emit(p1, 'chat:send', { text: '  hello   table  ' });
+  assert(sent.ok, 'a player can post to chat');
+  await sleep(200);
+  const mine = heard.p2.find((m) => m.kind === 'chat' && m.name === 'Youcef');
+  assert(!!mine, 'the message reached the other players');
+  assert(mine?.text === 'hello table', `whitespace is collapsed (got "${mine?.text}")`);
+  assert(mine?.playerId === j1.playerId, 'the message carries the sender identity');
+  assert(heard.p1.some((m) => m.id === mine.id), 'the sender sees their own message too');
+
+  const hosted = await emit(host, 'chat:send', { text: 'board screen here' });
+  assert(hosted.ok, 'the host can post to chat');
+  await sleep(150);
+  assert(heard.p1.some((m) => m.isHost && m.text === 'board screen here'), 'host messages are flagged as such');
+
+  const blank = await emit(p1, 'chat:send', { text: '   ' });
+  assert(!!blank.error, `an empty message is refused (${blank.error})`);
+
+  const flood = await emit(p1, 'chat:send', { text: 'again' });
+  assert(!!flood.error, `back-to-back messages are throttled (${flood.error})`);
+
+  await sleep(500);
+  const longRes = await emit(p1, 'chat:send', { text: 'x'.repeat(400) });
+  await sleep(150);
+  const longMsg = heard.p2.filter((m) => m.kind === 'chat').at(-1);
+  assert(longRes.ok && longMsg.text.length === 240, `long messages are clipped (${longMsg.text.length} chars)`);
+
   // Start
   const rack1P = once(p1, 'rack');
   const rack2P = once(p2, 'rack');
@@ -149,6 +192,12 @@ try {
   const stLeft = await afterLeave;
   assert(stLeft !== null, 'the empty seat is broadcast as left');
   assert(stLeft?.status === 'ended', 'the game ends once only one player remains');
+
+  await sleep(150);
+  assert(heard.host.some((m) => m.kind === 'system' && /Amine left the game/.test(m.text)),
+    'leaving is announced in chat');
+  assert(heard.host.some((m) => m.kind === 'system' && /^Game over/.test(m.text)),
+    'the result is announced in chat');
 
   // ── A solo human against three bots ──
   const host2 = io(URL);
