@@ -47,6 +47,12 @@ function touch(room) { room.lastActivity = Date.now(); }
 function broadcast(room) {
   touch(room);
   io.to(room.code).emit('state', publicState(room.game, room.code));
+  // The log only grows on a completed turn, so skip it on the chatty paths
+  // (tile-drag previews broadcast several times a second).
+  if (room.sentHistory !== room.game.history.length) {
+    room.sentHistory = room.game.history.length;
+    io.to(room.code).emit('history', room.game.history);
+  }
   for (const p of room.game.players) {
     if (p.connected && p.socketId) io.to(p.socketId).emit('rack', p.rack);
   }
@@ -160,7 +166,7 @@ io.on('connection', (socket) => {
     const code = genCode();
     const room = {
       code, game: createGame(), hostToken: uid(), hostSocketId: socket.id,
-      lastActivity: Date.now(), messages: [],
+      lastActivity: Date.now(), messages: [], sentHistory: 0,
     };
     rooms.set(code, room);
     socket.join(code);
@@ -188,6 +194,7 @@ io.on('connection', (socket) => {
     // "X joined" arrives as a live message and reads as unread to them.
     postSystem(room, `${player.name} joined.`);
     socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     broadcast(room);
   });
 
@@ -201,6 +208,7 @@ io.on('connection', (socket) => {
       socket.data = { code: room.code, role: 'host' };
       cb?.({ ok: true, role: 'host', code: room.code });
       socket.emit('chat:history', room.messages);
+      socket.emit('history', room.game.history);
       broadcast(room);
       return;
     }
@@ -212,6 +220,7 @@ io.on('connection', (socket) => {
     socket.data = { code: room.code, role: 'player', playerId };
     cb?.({ ok: true, role: 'player', code: room.code, playerId });
     socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     broadcast(room);
   });
 
@@ -331,6 +340,7 @@ io.on('connection', (socket) => {
     touch(room);
     socket.emit('state', publicState(room.game, room.code));
     socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     const player = findPlayer(room);
     if (player) socket.emit('rack', player.rack);
     cb?.({ ok: true });

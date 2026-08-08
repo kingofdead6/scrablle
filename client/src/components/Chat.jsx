@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { socket } from '../socket';
+import Sheet from './Sheet';
 
 /**
  * Room chat. Holds the message log, tracks how many arrived while the panel was
@@ -118,44 +119,31 @@ export default function ChatPanel({ messages, me, isHost, code, onClose, onError
   const isMine = (msg) =>
     msg.playerId ? msg.playerId === me : isHost && msg.isHost;
 
+  const composer = (
+    <form onSubmit={send} className="flex gap-2 border-t border-line p-3">
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="Message the table…"
+        maxLength={240}
+        className="h-11 min-w-0 flex-1 rounded-lg border border-line bg-ink/60 px-3 text-sm text-ivory placeholder:text-mist/50 focus:border-brass focus:outline-none"
+      />
+      <button type="submit" disabled={!draft.trim()} className="btn btn-brass h-11 px-4 text-sm">
+        Send
+      </button>
+    </form>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-end sm:justify-end" onClick={onClose}>
-      <div
-        className="slide-up card m-0 flex h-[70dvh] w-full flex-col sm:m-5 sm:h-[28rem] sm:w-[22rem] sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h3 className="font-display text-base font-semibold text-ivory">
-            Table chat
-            {code && <span className="ml-2 align-middle text-xs font-semibold tracking-[0.2em] text-brasslight">{code}</span>}
-          </h3>
-          <button onClick={onClose} className="btn btn-ghost h-8 px-3 text-sm">Close</button>
-        </div>
-
-        <div ref={listRef} className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
-          {messages.length === 0 ? (
-            <p className="pt-6 text-center text-sm text-mist">
-              Nothing yet. Say hello — everyone in the room sees it.
-            </p>
-          ) : (
-            messages.map((msg) => <Message key={msg.id} msg={msg} mine={isMine(msg)} />)
-          )}
-        </div>
-
-        <form onSubmit={send} className="flex gap-2 border-t border-line p-3">
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Message the table…"
-            maxLength={240}
-            className="h-11 min-w-0 flex-1 rounded-lg border border-line bg-ink/60 px-3 text-sm text-ivory placeholder:text-mist/50 focus:border-brass focus:outline-none"
-          />
-          <button type="submit" disabled={!draft.trim()} className="btn btn-brass h-11 px-4 text-sm">
-            Send
-          </button>
-        </form>
-      </div>
-    </div>
+    <Sheet title="Table chat" badge={code} onClose={onClose} footer={composer} bodyRef={listRef} bodyClass="space-y-2 px-3 py-3">
+      {messages.length === 0 ? (
+        <p className="pt-6 text-center text-sm text-mist">
+          Nothing yet. Say hello — everyone in the room sees it.
+        </p>
+      ) : (
+        messages.map((msg) => <Message key={msg.id} msg={msg} mine={isMine(msg)} />)
+      )}
+    </Sheet>
   );
 }

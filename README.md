@@ -38,9 +38,23 @@ One process, one port — deploy `server/` (with the built `client/dist` next to
 - **Swap** exchanges selected tiles with the bag (ends your turn). **Pass** skips (tap twice to confirm).
 - Blank tiles open a letter picker; they score 0 and show a red dot.
 - **⟳ Refresh** pulls a fresh board and rack from the server (and reconnects first if the socket dropped). **Leave** gives up your seat — mid-game your tiles go back to the bag and turn order closes over you.
+- **Tap the tile bag** (the count on the phone bar, the card on the board screen) to see exactly what letters are still to come.
+- **📜** opens the full move history — every turn, who played it, the words, and the score.
 - **💬** opens the table chat — see below.
 - **🎨** picks one of **16 board themes**, grouped dark and light: Midnight Felt, Classic Wood, Emerald Table, Ocean Deep, Noir, Neon Arcade, Ruby Velvet, Slate & Copper, Autumn Oak, Lavender Dusk, Carbon & Lime, Parchment, Sakura, Arctic, Desert Sand, Mint Cream. A theme re-points the shared colour tokens, so the whole interface follows the board, not just the grid. The choice is per-device and remembered.
 - Refreshing or losing connection is fine — the seat is held and the app auto-rejoins.
+
+## Tiles left
+
+Tapping the bag opens a per-letter breakdown of what's **unseen** — deliberately unseen rather than the literal bag, because the bag alone would let you subtract and read an opponent's rack. Unseen means the bag *plus* the racks you can't see, minus your own tiles, which is exactly what tile-tracking at a real table gives you. The panel splits the total into bag / racks and calls out vowels, consonants and blanks.
+
+None of this needs the server: every tile is either on the board or unseen, and the board is public, so `client/src/tiles.js` derives it from the 100-tile set minus what's been played.
+
+## Move history
+
+**📜** opens the turn-by-turn record: numbered turns, who took each one, the words formed with their individual scores, bingo bonuses, what the turn was worth, and the running total after it. Passes, swaps and walk-outs are in there too, and the end-of-game leftover-tile settlement gets its own entry showing each player's swing. A compact scoreboard pins to the top.
+
+The engine keeps the log in `game.history`; the server pushes it as a `history` event only when a turn actually completes, so the frequent tile-drag preview broadcasts stay light. Anyone joining, rejoining or refreshing gets the whole log.
 
 ## Chat
 
@@ -79,16 +93,20 @@ client/src/
   socket.js               Socket singleton (VITE_SERVER_URL override)
   constants.js            Board bonuses + letter values (render copy)
   scoring.js              Client-side "what is this play worth" preview
+  tiles.js                Unseen-tile counts derived from the board
   themes.js               The 16 board themes + persistence
   components/Board.jsx      15×15 grid, scales via container queries
   components/HostView.jsx   Lobby (code-as-tiles, bots, timer), live board, score rail
   components/PlayerView.jsx Rack, tap-to-place, swap/pass/blank picker, zoom
+  components/Sheet.jsx      Popup shell shared by chat / tiles / history
   components/Chat.jsx       Room chat popup + unread badge
+  components/TilesPanel.jsx   What's left to come, per letter
+  components/HistoryPanel.jsx Turn-by-turn log with running totals
   components/ThemePicker.jsx  Theme sheet, grouped dark/light
   components/ScoreBurst.jsx   Accepted-word score burst + bingo confetti
 ```
 
-**Socket events:** `host:create` `host:start` `host:restart` `host:close` `host:setTimer` · `host:addBot` `host:removeBot` `host:setBotDifficulty` · `player:join` `player:move` `player:pass` `player:swap` `player:preview` `player:leave` · `chat:send` · `rejoin` `client:refresh` → server emits `state` (public, racks hidden) to the room, `rack` privately to each player, `chat:new` / `chat:history` for the thread, and `room:closed` when the host shuts the room down.
+**Socket events:** `host:create` `host:start` `host:restart` `host:close` `host:setTimer` · `host:addBot` `host:removeBot` `host:setBotDifficulty` · `player:join` `player:move` `player:pass` `player:swap` `player:preview` `player:leave` · `chat:send` · `rejoin` `client:refresh` → server emits `state` (public, racks hidden) to the room, `rack` privately to each player, `history` for the move log, `chat:new` / `chat:history` for the thread, and `room:closed` when the host shuts the room down.
 
 
 Mobile App Link : https://scrable-app.vercel.app/scrablle.apk

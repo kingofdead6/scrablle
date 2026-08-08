@@ -158,22 +158,39 @@ try {
   assert(st2.turn === 1 - mover, 'turn passed to the other player');
   assert(st2.lastMove.type === 'play' && st2.lastMove.cells.length === 2, 'lastMove broadcast for host effects');
 
-  // Refresh pulls a fresh state + rack for whoever asks
+  // Refresh pulls a fresh state + rack + history for whoever asks
   const refreshedState = once(socks[mover], 'state');
   const refreshedRack = once(socks[mover], 'rack');
+  const refreshedLog = once(socks[mover], 'history');
   const refreshed = await emit(socks[mover], 'client:refresh');
   assert(refreshed.ok, 'refresh acknowledged');
-  const [rst, rrack] = await Promise.all([refreshedState, refreshedRack]);
+  const [rst, rrack, rlog] = await Promise.all([refreshedState, refreshedRack, refreshedLog]);
   assert(rst.code === created.code && rst.board[7][7], 'refresh returns the current board');
   assert(Array.isArray(rrack) && rrack.length === 7, 'refresh returns the private rack');
 
+  // ── Move history ──
+  assert(rlog.length === 1, `the log holds the one turn played so far (${rlog.length})`);
+  assert(rlog[0].playerName === st.players[mover].name && rlog[0].score === moved.score,
+    `the log records who played and for how much (${rlog[0].playerName} +${rlog[0].score})`);
+  assert(rlog[0].total === moved.score, 'the log carries the running total');
+  assert(rlog[0].words?.[0]?.word.length === 2, 'the log keeps the words behind the score');
+  assert(rst.historyCount === 1, 'state advertises how many turns are logged');
+
   // Pass, then the mover swaps 2 tiles on their next turn
   const rackAfterPassP = once(socks[mover], 'rack');
+  const logAfterPass = waitFor(host, 'history', (h) => h.length === 2);
   const passed = await emit(socks[1 - mover], 'player:pass');
   assert(passed.ok, 'pass accepted');
   const rackAfterPass = await rackAfterPassP;
+  const passLog = await logAfterPass;
+  assert(passLog?.at(-1)?.type === 'pass', 'the log grows as turns are taken, passes included');
+
+  const logAfterSwap = waitFor(host, 'history', (h) => h.length === 3);
   const swapped = await emit(socks[mover], 'player:swap', { letters: rackAfterPass.slice(0, 2) });
   assert(swapped.ok, 'swap of 2 tiles accepted');
+  const swapLog = await logAfterSwap;
+  assert(swapLog?.at(-1)?.type === 'swap' && swapLog.at(-1).count === 2,
+    'swaps are logged with how many tiles went back');
 
   // Rejoin: player 1 drops and reclaims their seat
   p1.disconnect();

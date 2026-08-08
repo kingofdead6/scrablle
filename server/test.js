@@ -1,6 +1,6 @@
 // Quick engine sanity tests: node test.js
 import {
-  createGame, startGame, applyMove, validateMove, publicState, passTurn, leavePlayer,
+  createGame, startGame, applyMove, validateMove, publicState, passTurn, leavePlayer, swapTiles,
 } from './game.js';
 import { chooseBotTurn, warmBotDictionary } from './bot.js';
 
@@ -93,6 +93,65 @@ assert(!!res.error, `playing a tile you don't hold is rejected (${res.error})`);
 const pub = publicState(game, 'TEST');
 assert(pub.players.every(p => p.rack === undefined && typeof p.rackCount === 'number'),
   'public state exposes rackCount only');
+
+// ── Move history ──
+{
+  const log = game.history;
+  assert(log.length >= 4, `every turn is logged (${log.length} entries)`);
+  assert(log.every((t, i) => t.n === i + 1), 'entries are numbered in order');
+
+  const hello = log[0];
+  assert(hello.type === 'play' && hello.playerName === 'Youcef' && hello.score === 18,
+    `the log records who played and for how much (${hello.playerName} ${hello.score})`);
+  assert(hello.words.map(w => w.word).join() === 'HELLO', 'the log keeps the words behind the score');
+  assert(hello.total === 18, `the log carries the running total (${hello.total})`);
+
+  const petAt = log.find((t) => t.words?.some((w) => w.word === 'PET'));
+  assert(petAt.total === 30, `running total accumulates across turns (${petAt.total})`);
+  assert(petAt.words.length === 2, 'multi-word turns keep every word');
+
+  const g = createGame();
+  g.players.push(
+    { id: 'a', name: 'A', rack: [], score: 0, connected: true },
+    { id: 'b', name: 'B', rack: [], score: 0, connected: true },
+  );
+  startGame(g);
+  assert(g.history.length === 0, 'a fresh game starts with an empty log');
+  passTurn(g, g.turn);
+  assert(g.history[0].type === 'pass' && g.history[0].score === 0, 'passes are logged too');
+  const before = g.bag.length;
+  swapTiles(g, g.turn, g.players[g.turn].rack.slice(0, 2));
+  assert(g.history[1].type === 'swap' && g.history[1].count === 2,
+    'swaps are logged with how many tiles went back');
+  assert(g.bag.length === before, 'the bag is the same size after a swap');
+}
+
+// ── Endgame leftover adjustments are logged ──
+{
+  const g = createGame();
+  g.players.push(
+    { id: 'a', name: 'A', rack: [], score: 0, connected: true },
+    { id: 'b', name: 'B', rack: [], score: 0, connected: true },
+  );
+  startGame(g);
+  g.turn = 0;
+  g.players[0].score = 100;
+  g.players[1].score = 40;
+  g.players[0].rack = ['C', 'A', 'T'];   // 5 points left in hand
+  g.players[1].rack = ['Q'];             // 10 points left in hand
+  g.bag = [];
+  // Two full rounds of scoreless turns end the game.
+  for (let i = 0; i < 4; i++) passTurn(g, g.turn);
+
+  const final = g.history.at(-1);
+  assert(final.type === 'final', 'the leftover-tile settlement is its own log entry');
+  assert(final.adjustments.length === 2, 'both players are listed in the settlement');
+  const a = final.adjustments.find((x) => x.playerName === 'A');
+  assert(a.delta === -5 && a.total === 95, `A drops their rack value (${a.delta} → ${a.total})`);
+  const b = final.adjustments.find((x) => x.playerName === 'B');
+  assert(b.delta === -10 && b.total === 30, `B drops their rack value (${b.delta} → ${b.total})`);
+  assert(g.winners.join() === 'A', 'the log matches the declared winner');
+}
 
 // ── Leaving mid-game ──
 {

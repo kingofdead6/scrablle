@@ -69,6 +69,7 @@ export function createGame() {
     firstMoveDone: false,
     scorelessTurns: 0,
     lastMove: null,   // { playerName, type, words, score, cells }
+    history: [],      // every completed turn, oldest first (see recordTurn)
     winners: null,    // [names]
     turnSeconds: 90,  // per-turn time limit chosen by host; 0 = no limit
     turnEndsAt: null, // epoch ms when the current turn auto-passes
@@ -100,6 +101,7 @@ export function startGame(game) {
   game.firstMoveDone = false;
   game.scorelessTurns = 0;
   game.lastMove = null;
+  game.history = [];
   game.winners = null;
   game.bag = shuffledBag();
   game.board = Array.from({ length: 15 }, () => Array(15).fill(null));
@@ -121,6 +123,17 @@ export function resetTurnClock(game) {
 function drawTiles(game, player) {
   while (player.rack.length < RACK_SIZE && game.bag.length > 0)
     player.rack.push(game.bag.pop());
+}
+
+const HISTORY_LIMIT = 400;
+
+/**
+ * Appends a completed turn to the log. `lastMove` drives the board effects and
+ * only ever holds the newest turn; this is the scrollable record of the game.
+ */
+function recordTurn(game, entry) {
+  game.history.push({ n: game.history.length + 1, ...entry });
+  if (game.history.length > HISTORY_LIMIT) game.history.shift();
 }
 
 // ─── Move validation + scoring ───────────────────────────────────────────────
@@ -293,6 +306,15 @@ export function applyMove(game, playerIdx, placements) {
     cells: placements.map(p => ({ row: p.row, col: p.col })),
   };
 
+  recordTurn(game, {
+    playerName: player.name,
+    type: 'play',
+    words: result.words,
+    score: result.score,
+    bingo: result.bingo,
+    total: player.score,
+  });
+
   drawTiles(game, player);
   if (player.rack.length === 0 && game.bag.length === 0) {
     finishGame(game, playerIdx);
@@ -305,6 +327,7 @@ export function applyMove(game, playerIdx, placements) {
 export function passTurn(game, playerIdx) {
   const player = game.players[playerIdx];
   game.lastMove = { playerName: player.name, type: 'pass' };
+  recordTurn(game, { playerName: player.name, type: 'pass', score: 0, total: player.score });
   game.scorelessTurns++;
   if (game.scorelessTurns >= activePlayers(game).length * 2) finishGame(game, null);
   else nextTurn(game);
@@ -330,6 +353,9 @@ export function swapTiles(game, playerIdx, letters) {
   game.bag.push(...letters);
   shuffleInPlace(game.bag);
   game.lastMove = { playerName: player.name, type: 'swap', count: letters.length };
+  recordTurn(game, {
+    playerName: player.name, type: 'swap', count: letters.length, score: 0, total: player.score,
+  });
   game.scorelessTurns++;
   if (game.scorelessTurns >= activePlayers(game).length * 2) finishGame(game, null);
   else nextTurn(game);
@@ -370,6 +396,7 @@ export function leavePlayer(game, playerIdx) {
 
   if (game.status === 'playing') {
     game.lastMove = { playerName: player.name, type: 'leave' };
+    recordTurn(game, { playerName: player.name, type: 'leave', total: player.score });
     // No game left to play if fewer than two seats remain, or only bots do.
     if (activePlayers(game).length < 2 || humanPlayers(game).length === 0) {
       finishGame(game, null);
@@ -401,6 +428,7 @@ function finishGame(game, outPlayerIdx) {
   const leftover = game.players.map(p =>
     p.rack.reduce((s, t) => s + LETTER_VALUES[t], 0)
   );
+  const before = game.players.map(p => p.score);
   game.players.forEach((p, i) => {
     if (i === outPlayerIdx) {
       p.score += leftover.reduce((s, v, j) => (j === i ? s : s + v), 0);
@@ -408,6 +436,18 @@ function finishGame(game, outPlayerIdx) {
       p.score -= leftover[i];
     }
   });
+
+  // The leftover-tile swing decides plenty of games — show the working.
+  const adjustments = game.players
+    .map((p, i) => ({ playerName: p.name, delta: p.score - before[i], total: p.score }))
+    .filter((a) => a.delta !== 0);
+  if (adjustments.length > 0)
+    recordTurn(game, {
+      type: 'final',
+      wentOut: outPlayerIdx === null ? null : game.players[outPlayerIdx].name,
+      adjustments,
+    });
+
   const standing = activePlayers(game);
   const pool = standing.length > 0 ? standing : game.players;
   const best = Math.max(...pool.map(p => p.score));
@@ -436,6 +476,7 @@ export function publicState(game, code) {
     turn: game.turn,
     bagCount: game.bag.length,
     lastMove: game.lastMove,
+    historyCount: game.history.length,
     winners: game.winners,
     turnSeconds: game.turnSeconds,
     turnEndsAt: game.turnEndsAt,
