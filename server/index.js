@@ -29,7 +29,8 @@ if (fs.existsSync(clientDist)) {
 }
 
 // ─── Rooms ────────────────────────────────────────────────────────────────────
-const rooms = new Map(); // code -> { code, game, hostToken, hostSocketId, lastActivity }
+// code -> { code, game, hostToken, hostSocketId, lastActivity, messages, botTimer }
+const rooms = new Map();
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 function genCode() {
@@ -46,9 +47,41 @@ function touch(room) { room.lastActivity = Date.now(); }
 function broadcast(room) {
   touch(room);
   io.to(room.code).emit('state', publicState(room.game, room.code));
+  // The log only grows on a completed turn, so skip it on the chatty paths
+  // (tile-drag previews broadcast several times a second).
+  if (room.sentHistory !== room.game.history.length) {
+    room.sentHistory = room.game.history.length;
+    io.to(room.code).emit('history', room.game.history);
+  }
   for (const p of room.game.players) {
     if (p.connected && p.socketId) io.to(p.socketId).emit('rack', p.rack);
   }
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+const CHAT_HISTORY = 80;   // messages kept per room, oldest dropped
+const CHAT_MAX_LEN = 240;
+const CHAT_MIN_GAP_MS = 400;
+
+/** Appends a message to the room log and pushes it to everyone in the room. */
+function postChat(room, message) {
+  const entry = { id: uid(), ts: Date.now(), ...message };
+  room.messages.push(entry);
+  if (room.messages.length > CHAT_HISTORY) room.messages.splice(0, room.messages.length - CHAT_HISTORY);
+  touch(room);
+  io.to(room.code).emit('chat:new', entry);
+  return entry;
+}
+
+const postSystem = (room, text) => postChat(room, { kind: 'system', text });
+
+/** Any turn can be the one that ends the game — say so in chat when it is. */
+function announceIfEnded(room, wasStatus) {
+  if (wasStatus === 'ended' || room.game.status !== 'ended') return;
+  const winners = room.game.winners || [];
+  postSystem(room, winners.length > 1
+    ? `Game over — ${winners.join(' & ')} tie it.`
+    : `Game over — ${winners[0]} wins.`);
 }
 
 // ─── Bots ─────────────────────────────────────────────────────────────────────
@@ -86,6 +119,7 @@ function scheduleBotTurn(room) {
     }
 
     game.thinking = null;
+    announceIfEnded(room, 'playing');
     broadcast(room);
     scheduleBotTurn(room); // the next seat may be a bot too
   }, min + Math.random() * (max - min));
@@ -117,6 +151,7 @@ setInterval(() => {
     if (now < game.turnEndsAt) continue;
     cancelBotTurn(room);
     passTurn(game, game.turn);
+    announceIfEnded(room, 'playing');
     broadcast(room);
     scheduleBotTurn(room);
   }
@@ -129,11 +164,14 @@ io.on('connection', (socket) => {
 
   socket.on('host:create', (cb) => {
     const code = genCode();
-    const room = { code, game: createGame(), hostToken: uid(), hostSocketId: socket.id, lastActivity: Date.now() };
+    const room = {
+      code, game: createGame(), hostToken: uid(), hostSocketId: socket.id,
+      lastActivity: Date.now(), messages: [], sentHistory: 0,
+    };
     rooms.set(code, room);
     socket.join(code);
     socket.data = { code, role: 'host' };
-    cb?.({ ok: true, code, hostToken: room.hostToken, state: publicState(room.game, code) });
+    cb?.({ ok: true, code, hostToken: room.hostToken, state: publicState(room.game, code), messages: room.messages });
   });
 
   socket.on('player:join', ({ code, name }, cb) => {
@@ -152,6 +190,11 @@ io.on('connection', (socket) => {
     socket.join(code);
     socket.data = { code, role: 'player', playerId: player.id };
     cb?.({ ok: true, playerId: player.id, code });
+    // Announce first, then hand over the log — otherwise the joiner's own
+    // "X joined" arrives as a live message and reads as unread to them.
+    postSystem(room, `${player.name} joined.`);
+    socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     broadcast(room);
   });
 
@@ -164,6 +207,8 @@ io.on('connection', (socket) => {
       socket.join(room.code);
       socket.data = { code: room.code, role: 'host' };
       cb?.({ ok: true, role: 'host', code: room.code });
+      socket.emit('chat:history', room.messages);
+      socket.emit('history', room.game.history);
       broadcast(room);
       return;
     }
@@ -174,6 +219,8 @@ io.on('connection', (socket) => {
     socket.join(room.code);
     socket.data = { code: room.code, role: 'player', playerId };
     cb?.({ ok: true, role: 'player', code: room.code, playerId });
+    socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     broadcast(room);
   });
 
@@ -185,8 +232,36 @@ io.on('connection', (socket) => {
     if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
     startGame(room.game);
     cb?.({ ok: true });
+    postSystem(room, 'Game on — good luck.');
     broadcast(room);
     scheduleBotTurn(room);
+  });
+
+  // ── Chat ──
+  socket.on('chat:send', ({ text } = {}, cb) => {
+    const room = findRoom();
+    if (!room) return cb?.({ error: 'Room not found.' });
+
+    const body = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LEN);
+    if (!body) return cb?.({ error: 'Type something first.' });
+
+    const now = Date.now();
+    if (now - (socket.data.lastChatAt || 0) < CHAT_MIN_GAP_MS)
+      return cb?.({ error: 'Slow down a little.' });
+    socket.data.lastChatAt = now;
+
+    const player = findPlayer(room);
+    if (socket.data.role !== 'host' && !player)
+      return cb?.({ error: 'You are not in this room.' });
+
+    postChat(room, {
+      kind: 'chat',
+      text: body,
+      name: player ? player.name : 'Host',
+      playerId: player ? player.id : null,
+      isHost: !player,
+    });
+    cb?.({ ok: true });
   });
 
   // ── Bots ──
@@ -207,6 +282,7 @@ io.on('connection', (socket) => {
     // First bot in the room pays for the prefix index; do it off the event loop.
     setImmediate(warmBotDictionary);
     cb?.({ ok: true });
+    postSystem(room, `${name} sat down (${level} bot).`);
     broadcast(room);
   });
 
@@ -252,6 +328,7 @@ io.on('connection', (socket) => {
     if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
     startGame(room.game);
     cb?.({ ok: true });
+    postSystem(room, 'Rematch — new board, same table.');
     broadcast(room);
     scheduleBotTurn(room);
   });
@@ -262,6 +339,8 @@ io.on('connection', (socket) => {
     if (!room) return cb?.({ error: 'Room not found.' });
     touch(room);
     socket.emit('state', publicState(room.game, room.code));
+    socket.emit('chat:history', room.messages);
+    socket.emit('history', room.game.history);
     const player = findPlayer(room);
     if (player) socket.emit('rack', player.rack);
     cb?.({ ok: true });
@@ -275,11 +354,14 @@ io.on('connection', (socket) => {
     const player = findPlayer(room);
     if (!player) return cb?.({ error: 'You are not seated in a game.' });
     cancelBotTurn(room);
+    const wasStatus = room.game.status;
     const result = leavePlayer(room.game, room.game.players.indexOf(player));
     if (result.error) return cb?.(result);
     socket.leave(room.code);
     socket.data = {};
     cb?.({ ok: true });
+    postSystem(room, `${player.name} left the game.`);
+    announceIfEnded(room, wasStatus);
     broadcast(room);
     scheduleBotTurn(room);
   });
@@ -303,6 +385,7 @@ io.on('connection', (socket) => {
     // Hand the breakdown back so the player sees what the word was worth.
     const scored = ctx.room.game.lastMove;
     cb?.({ ok: true, score: scored.score, words: scored.words, bingo: scored.bingo });
+    announceIfEnded(ctx.room, 'playing');
     broadcast(ctx.room);
     scheduleBotTurn(ctx.room);
   });
@@ -312,6 +395,7 @@ io.on('connection', (socket) => {
     if (!ctx) return;
     passTurn(ctx.room.game, ctx.idx);
     cb?.({ ok: true });
+    announceIfEnded(ctx.room, 'playing');
     broadcast(ctx.room);
     scheduleBotTurn(ctx.room);
   });
@@ -322,6 +406,7 @@ io.on('connection', (socket) => {
     const result = swapTiles(ctx.room.game, ctx.idx, letters);
     if (result.error) return cb?.(result);
     cb?.({ ok: true });
+    announceIfEnded(ctx.room, 'playing');
     broadcast(ctx.room);
     scheduleBotTurn(ctx.room);
   });

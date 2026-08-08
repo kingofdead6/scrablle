@@ -4,6 +4,9 @@ import Board from './Board';
 import Confirm from './Confirm';
 import ScoreBurst, { useScoreBurst } from './ScoreBurst';
 import ThemeSheet, { ThemeButton } from './ThemePicker';
+import ChatPanel, { ChatButton } from './Chat';
+import HistoryPanel, { HistoryButton } from './HistoryPanel';
+import TilesPanel from './TilesPanel';
 import { RefreshButton } from './GameBarButtons';
 import { Toast, useToast } from './Toast';
 import { useCountdown } from '../useCountdown';
@@ -31,7 +34,7 @@ function Thinking() {
   );
 }
 
-function Header({ code, onLeave, onTheme, showToast }) {
+function Header({ code, onLeave, onTheme, onChat, onHistory, unread, turnCount, showToast }) {
   return (
     <header className="flex items-center justify-between gap-2">
       <span className="font-display text-lg font-semibold text-ivory">Scrabble Live</span>
@@ -41,6 +44,8 @@ function Header({ code, onLeave, onTheme, showToast }) {
             {code}
           </span>
         )}
+        <ChatButton unread={unread} onClick={onChat} />
+        <HistoryButton count={turnCount} onClick={onHistory} />
         <RefreshButton onDone={showToast} />
         <ThemeButton onClick={onTheme} className="h-9 px-3 text-sm" />
         <button onClick={onLeave} className="btn btn-ghost h-9 px-3 text-sm">Close room</button>
@@ -209,7 +214,8 @@ function BotControls({ state, showToast }) {
   );
 }
 
-export default function HostView({ state, onLeave, theme, onTheme }) {
+export default function HostView({ state, onLeave, theme, onTheme, chat, history }) {
+  const [tilesOpen, setTilesOpen] = useState(false);
   const [toast, showToastRaw] = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -245,6 +251,15 @@ export default function HostView({ state, onLeave, theme, onTheme }) {
   const overlays = (
     <>
       {themeOpen && <ThemeSheet theme={theme} onPick={onTheme} onClose={() => setThemeOpen(false)} />}
+      {chat.open && (
+        <ChatPanel messages={chat.messages} me={null} isHost code={state.code} onClose={chat.close} onError={showToast} />
+      )}
+      {history.open && (
+        <HistoryPanel turns={history.turns} players={state.players} me={null} onClose={history.close} />
+      )}
+      {tilesOpen && (
+        <TilesPanel board={state.board} bagCount={state.bagCount} onClose={() => setTilesOpen(false)} />
+      )}
       {confirmClose && (
         <Confirm
           title="Close this room?"
@@ -263,7 +278,16 @@ export default function HostView({ state, onLeave, theme, onTheme }) {
     const humans = state.players.filter((p) => !p.isBot).length;
     return (
       <div className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-5 py-6">
-        <Header code={null} onLeave={() => setConfirmClose(true)} onTheme={() => setThemeOpen(true)} showToast={showToast} />
+        <Header
+          code={null}
+          onLeave={() => setConfirmClose(true)}
+          onTheme={() => setThemeOpen(true)}
+          onChat={chat.toggle}
+          onHistory={history.toggle}
+          unread={chat.unread}
+          turnCount={history.turns.length}
+          showToast={showToast}
+        />
         <div className="fade-up flex flex-1 flex-col items-center justify-center gap-8 text-center">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-mist">Room code</p>
@@ -332,7 +356,16 @@ export default function HostView({ state, onLeave, theme, onTheme }) {
   // ── Playing / ended ──
   return (
     <div className="mx-auto flex min-h-dvh max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
-      <Header code={state.code} onLeave={() => setConfirmClose(true)} onTheme={() => setThemeOpen(true)} showToast={showToast} />
+      <Header
+        code={state.code}
+        onLeave={() => setConfirmClose(true)}
+        onTheme={() => setThemeOpen(true)}
+        onChat={chat.toggle}
+        onHistory={history.toggle}
+        unread={chat.unread}
+        turnCount={history.turns.length}
+        showToast={showToast}
+      />
 
       {state.status === 'ended' && (
         <div className="fade-up card border-brass/50 p-5 text-center">
@@ -357,10 +390,16 @@ export default function HostView({ state, onLeave, theme, onTheme }) {
         </div>
         <aside className="space-y-4">
           <PlayerRail state={state} remaining={remaining} />
-          <div className="card flex items-center justify-between p-4">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-mist">Tile bag</span>
+          <button
+            onClick={() => setTilesOpen(true)}
+            className="card flex w-full items-center justify-between p-4 text-left transition hover:border-brass/50"
+          >
+            <span>
+              <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-mist">Tile bag</span>
+              <span className="block text-xs text-mist/70">tap to see what's left</span>
+            </span>
             <span className="font-display text-2xl font-semibold text-ivory">{state.bagCount}</span>
-          </div>
+          </button>
           <LastMove move={state.lastMove} />
         </aside>
       </div>

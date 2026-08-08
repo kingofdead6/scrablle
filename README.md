@@ -38,8 +38,29 @@ One process, one port — deploy `server/` (with the built `client/dist` next to
 - **Swap** exchanges selected tiles with the bag (ends your turn). **Pass** skips (tap twice to confirm).
 - Blank tiles open a letter picker; they score 0 and show a red dot.
 - **⟳ Refresh** pulls a fresh board and rack from the server (and reconnects first if the socket dropped). **Leave** gives up your seat — mid-game your tiles go back to the bag and turn order closes over you.
-- **🎨** picks one of 8 board themes (Midnight Felt, Classic Wood, Emerald Table, Ocean Deep, Noir, Neon Arcade, Parchment, Sakura). The choice is per-device and remembered.
+- **Tap the tile bag** (the count on the phone bar, the card on the board screen) to see exactly what letters are still to come.
+- **📜** opens the full move history — every turn, who played it, the words, and the score.
+- **💬** opens the table chat — see below.
+- **🎨** picks one of **16 board themes**, grouped dark and light: Midnight Felt, Classic Wood, Emerald Table, Ocean Deep, Noir, Neon Arcade, Ruby Velvet, Slate & Copper, Autumn Oak, Lavender Dusk, Carbon & Lime, Parchment, Sakura, Arctic, Desert Sand, Mint Cream. A theme re-points the shared colour tokens, so the whole interface follows the board, not just the grid. The choice is per-device and remembered.
 - Refreshing or losing connection is fine — the seat is held and the app auto-rejoins.
+
+## Tiles left
+
+Tapping the bag opens a per-letter breakdown of what's **unseen** — deliberately unseen rather than the literal bag, because the bag alone would let you subtract and read an opponent's rack. Unseen means the bag *plus* the racks you can't see, minus your own tiles, which is exactly what tile-tracking at a real table gives you. The panel splits the total into bag / racks and calls out vowels, consonants and blanks.
+
+None of this needs the server: every tile is either on the board or unseen, and the board is public, so `client/src/tiles.js` derives it from the 100-tile set minus what's been played.
+
+## Move history
+
+**📜** opens the turn-by-turn record: numbered turns, who took each one, the words formed with their individual scores, bingo bonuses, what the turn was worth, and the running total after it. Passes, swaps and walk-outs are in there too, and the end-of-game leftover-tile settlement gets its own entry showing each player's swing. A compact scoreboard pins to the top.
+
+The engine keeps the log in `game.history`; the server pushes it as a `history` event only when a turn actually completes, so the frequent tile-drag preview broadcasts stay light. Anyone joining, rejoining or refreshing gets the whole log.
+
+## Chat
+
+Everyone in the room — all four phones and the board screen — shares one live thread, opened with **💬** from the lobby, mid-game, or the end screen. The button carries an unread badge while the popup is shut. On a phone it slides up as a sheet; on the board screen it docks in the corner so the grid stays visible.
+
+The server keeps the last 80 messages per room and hands the backlog to anyone who joins, rejoins, or hits refresh, so reloading a phone doesn't lose the conversation. Alongside what people type, the thread records what happened at the table: who joined or left, when a bot sat down, when the game started, and who won. Messages are trimmed to 240 characters and throttled to a few per second.
 
 ## Bots
 
@@ -56,33 +77,36 @@ The host can seat up to 3 computer players from the lobby, each at Easy, Medium 
 - Bingo: +50 for playing all 7 tiles.
 - End: a player empties their rack with an empty bag (they gain everyone's leftover points, others subtract theirs), or two full rounds of scoreless turns.
 
-**No dictionary check** — like table Scrabble, players police each other's words. To enforce one, load a word list into a `Set` and reject in `validateMove()` right after the words are collected:
-
-```js
-for (const w of words) {
-  const word = w.map(x => x.cell.letter).join('');
-  if (!DICTIONARY.has(word)) return { error: `${word} is not a valid word.` };
-}
-```
+**Dictionary enforced** — every word a play forms, main and cross-words alike, is checked against `an-array-of-english-words` before the move is accepted, and the rejection names the word that failed. The same set backs the bots' move generator.
 
 ## Architecture
 
 ```
 server/
-  index.js   Socket.io rooms, join codes, rejoin tokens, broadcasting
-  game.js    Pure game engine: bag, validation, scoring, endgame
-  test.js    Engine unit tests (hand-verified scores)   → npm test
-  itest.js   End-to-end socket test (2 players + host)  → node itest.js
+  index.js   Socket.io rooms, join codes, rejoin tokens, chat log, bot scheduling
+  game.js    Pure game engine: bag, validation, scoring, leaving, endgame
+  bot.js     Move generation (anchors + cross-checks + prefix index), difficulty
+  test.js    Engine + bot unit tests (hand-verified scores)  → npm test
+  itest.js   End-to-end socket test (players, bots, chat)    → node itest.js
 client/src/
   App.jsx                 Session persistence + auto-rejoin + routing
-  socket.js               LAN-aware socket singleton
+  socket.js               Socket singleton (VITE_SERVER_URL override)
   constants.js            Board bonuses + letter values (render copy)
-  components/Board.jsx    15×15 grid, scales via container queries
-  components/HostView.jsx Lobby (code-as-tiles), live board, score rail, rematch
+  scoring.js              Client-side "what is this play worth" preview
+  tiles.js                Unseen-tile counts derived from the board
+  themes.js               The 16 board themes + persistence
+  components/Board.jsx      15×15 grid, scales via container queries
+  components/HostView.jsx   Lobby (code-as-tiles, bots, timer), live board, score rail
   components/PlayerView.jsx Rack, tap-to-place, swap/pass/blank picker, zoom
+  components/Sheet.jsx      Popup shell shared by chat / tiles / history
+  components/Chat.jsx       Room chat popup + unread badge
+  components/TilesPanel.jsx   What's left to come, per letter
+  components/HistoryPanel.jsx Turn-by-turn log with running totals
+  components/ThemePicker.jsx  Theme sheet, grouped dark/light
+  components/ScoreBurst.jsx   Accepted-word score burst + bingo confetti
 ```
 
-**Socket events:** `host:create` `host:start` `host:restart` · `player:join` `player:move` `player:pass` `player:swap` · `rejoin` → server emits `state` (public, racks hidden) to the room and `rack` privately to each player.
+**Socket events:** `host:create` `host:start` `host:restart` `host:close` `host:setTimer` · `host:addBot` `host:removeBot` `host:setBotDifficulty` · `player:join` `player:move` `player:pass` `player:swap` `player:preview` `player:leave` · `chat:send` · `rejoin` `client:refresh` → server emits `state` (public, racks hidden) to the room, `rack` privately to each player, `history` for the move log, `chat:new` / `chat:history` for the thread, and `room:closed` when the host shuts the room down.
 
 
 Mobile App Link : https://scrable-app.vercel.app/scrablle.apk

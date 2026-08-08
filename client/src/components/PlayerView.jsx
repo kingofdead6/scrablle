@@ -5,6 +5,9 @@ import Board from './Board';
 import Confirm from './Confirm';
 import ScoreBurst, { useScoreBurst } from './ScoreBurst';
 import ThemeSheet, { ThemeButton } from './ThemePicker';
+import ChatPanel, { ChatButton } from './Chat';
+import HistoryPanel, { HistoryButton } from './HistoryPanel';
+import TilesPanel from './TilesPanel';
 import { RefreshButton } from './GameBarButtons';
 import { Toast, useToast } from './Toast';
 import { useCountdown } from '../useCountdown';
@@ -18,7 +21,8 @@ function Thinking() {
   );
 }
 
-export default function PlayerView({ state, rack, me, onLeave, theme, onTheme }) {
+export default function PlayerView({ state, rack, me, onLeave, theme, onTheme, chat, history }) {
+  const [tilesOpen, setTilesOpen] = useState(false);
   const [order, setOrder] = useState([]);            // display order of rack indices
   const [selectedId, setSelectedId] = useState(null);
   const [staged, setStaged] = useState([]);          // {id, letter, isBlank, as, row, col}
@@ -204,6 +208,15 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme })
   const overlays = (
     <>
       {themeOpen && <ThemeSheet theme={theme} onPick={onTheme} onClose={() => setThemeOpen(false)} />}
+      {chat.open && (
+        <ChatPanel messages={chat.messages} me={me} isHost={false} code={state.code} onClose={chat.close} onError={showToast} />
+      )}
+      {history.open && (
+        <HistoryPanel turns={history.turns} players={state.players} me={me} onClose={history.close} />
+      )}
+      {tilesOpen && (
+        <TilesPanel board={state.board} myRack={rack} bagCount={state.bagCount} onClose={() => setTilesOpen(false)} />
+      )}
       {confirmLeave && (
         <Confirm
           title={state.status === 'playing' ? 'Leave the game?' : 'Leave the room?'}
@@ -247,6 +260,8 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme })
           </div>
         </div>
         <div className="flex gap-2">
+          <ChatButton unread={chat.unread} onClick={chat.toggle} className="h-10 px-4 text-sm" />
+          <HistoryButton count={history.turns.length} onClick={history.toggle} className="h-10 px-4 text-sm" />
           <ThemeButton onClick={() => setThemeOpen(true)} className="h-10 px-4 text-sm" />
           <RefreshButton onDone={showToast} className="h-10 px-4 text-sm" />
           <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
@@ -285,6 +300,8 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme })
           <p className="mt-4 text-xs text-mist">The host screen can start a rematch.</p>
         </div>
         <div className="flex gap-2">
+          <ChatButton unread={chat.unread} onClick={chat.toggle} className="h-10 px-4 text-sm" />
+          <HistoryButton count={history.turns.length} onClick={history.toggle} className="h-10 px-4 text-sm" />
           <ThemeButton onClick={() => setThemeOpen(true)} className="h-10 px-4 text-sm" />
           <RefreshButton onDone={showToast} className="h-10 px-4 text-sm" />
           <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-10 px-5 text-sm">Leave room</button>
@@ -315,11 +332,19 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme })
 
       <div className="mt-2 flex items-center justify-between gap-2 px-1 text-xs text-mist">
         <span>You <span className="font-display text-base font-semibold text-brasslight">{myScore}</span></span>
-        <span className="truncate">Bag {state.bagCount} · {state.code}</span>
+        <button
+          onClick={() => setTilesOpen(true)}
+          title="What's left to come"
+          className="btn btn-ghost h-7 shrink-0 px-2.5 text-xs"
+        >
+          Bag {state.bagCount}
+        </button>
         <span className="flex shrink-0 items-center gap-1.5">
           <button onClick={() => setZoom((z) => !z)} className="btn btn-ghost h-7 px-2.5 text-xs">
             {zoom ? 'Fit' : 'Zoom'}
           </button>
+          <ChatButton unread={chat.unread} onClick={chat.toggle} className="h-7 px-2 text-xs" />
+          <HistoryButton count={history.turns.length} onClick={history.toggle} className="h-7 px-2 text-xs" />
           <ThemeButton onClick={() => setThemeOpen(true)} className="h-7 px-2 text-xs" />
           <RefreshButton onDone={showToast} className="h-7 px-2 text-xs" />
           <button onClick={() => setConfirmLeave(true)} className="btn btn-ghost h-7 px-2.5 text-xs">Leave</button>
