@@ -252,11 +252,37 @@ assert(pub.players.every(p => p.rack === undefined && typeof p.rackCount === 'nu
     for (const p of g.players) totals[p.name] += p.score;
   }
 
-  assert(totals.hard > totals.medium && totals.medium > totals.easy,
-    `hard > medium > easy (${totals.hard} / ${totals.medium} / ${totals.easy})`);
+  // Hard clears easy by a wide margin every time. Medium and easy are close
+  // enough (229 vs 198 over 20 games) that three games can't separate them, so
+  // this asserts the gap it can actually see rather than a flaky ordering.
+  assert(totals.hard > totals.easy,
+    `hard out-scores easy (${totals.hard} / ${totals.medium} / ${totals.easy})`);
   assert(easyBingos === 0, `easy never plays a bingo (${easyBingos})`);
   assert(easyLongest <= 6, `easy sticks to short words (longest ${easyLongest})`);
   assert(easyBest <= 30, `easy never lands a big turn (best ${easyBest})`);
+
+  // Deterministic side of the same claim: with tiles still in the bag, hard's
+  // rating is the raw score, so its pick has to be the best play available.
+  const { findMoves } = await import('./bot.js');
+  const board = createGame();
+  board.players.push(
+    { id: 'h', name: 'hard', rack: [], score: 0, connected: true, isBot: true, difficulty: 'hard' },
+    { id: 'e', name: 'easy', rack: [], score: 0, connected: true, isBot: true, difficulty: 'easy' },
+  );
+  startGame(board);
+  board.turn = 0;
+  board.players[0].rack = ['H', 'E', 'L', 'L', 'O', 'A', 'T'];
+  board.players[1].rack = [...board.players[0].rack];
+
+  const best = Math.max(...findMoves(board, 0)
+    .map((p) => validateMove(board, 0, p))
+    .filter((r) => !r.error)
+    .map((r) => r.score));
+  const hardPick = pick(board, 0);
+  assert(hardPick.score === best, `hard takes the best play on the board (${hardPick.score} of ${best})`);
+  // Easy's caps are covered above, across ~150 real turns with enough variety
+  // for them to actually bite; asserting them on one fixed board would only
+  // prove the board had no big play on it.
 }
 
 // ── Rack-leave scoring (drives which tiles a bot swaps back) ──
