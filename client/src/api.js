@@ -1,7 +1,7 @@
 // Thin wrapper over the account API. Everything returns parsed JSON and throws
 // an Error carrying the server's message, so callers can just try/catch.
 
-const BASE = (import.meta.env.VITE_SERVER_URL || '').replace(/\/$/, '');
+const BASE = "https://scrablle.onrender.com";
 const url = (path) => `${BASE}/api${path}`;
 
 const TOKEN_KEY = 'scrabble-live-token';
