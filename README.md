@@ -2,7 +2,11 @@
 
 Party-style Scrabble for **5 devices or less**: one screen hosts the shared board, up to 4 phones join with a 4-letter code and play from their own rack. Every move syncs to every device in real time. Short on people? Fill the empty seats with **up to 3 bots** and play solo.
 
-**Stack:** Node.js + Express + Socket.io (server-authoritative game engine) · React + Vite + Tailwind v4 (client). No WebRTC — all devices connect to one Socket.io server, so there are zero NAT/TURN headaches and the server is the single source of truth for validation and scoring.
+Sign in and it becomes a proper little site: friends, direct messages, profiles with stats and a picture, a full game archive, and a dictionary you can search on its own page.
+
+**Stack:** Node.js + Express + Socket.io (server-authoritative game engine) · MongoDB via Mongoose for accounts · Cloudinary for profile pictures · React + Vite + Tailwind v4 + React Router (client). No WebRTC — all devices connect to one Socket.io server, so there are zero NAT/TURN headaches and the server is the single source of truth for validation and scoring.
+
+**Everything account-shaped is optional.** With an empty `.env` the server boots and hosts guest games exactly as it always has; the sign-in screen says so and names the variables that would switch accounts on. See [Configuration](#configuration).
 
 ## Quick start (dev)
 
@@ -34,6 +38,7 @@ One process, one port — deploy `server/` (with the built `client/dist` next to
 
 - Tap a tile in your rack, then tap a square. Legal landing squares light up while a tile is selected. Tap a placed (gold-ringed) tile to take it back.
 - The running total (**+24**, with each word broken down) appears above the rack and on the **Play** button as you place tiles, so you know what a word is worth before you commit.
+- Every word your tiles form is ringed **green** if it's real and **red** if it isn't, live, before you play it. The server answers from the same word list it validates against, so the ring never disagrees with the result.
 - **Play** submits; the server validates and scores, then broadcasts to all screens. The score you actually earned bursts on screen, with confetti on a bingo.
 - **Swap** exchanges selected tiles with the bag (ends your turn). **Pass** skips (tap twice to confirm).
 - Blank tiles open a letter picker; they score 0 and show a red dot.
@@ -43,6 +48,46 @@ One process, one port — deploy `server/` (with the built `client/dist` next to
 - **💬** opens the table chat — see below.
 - **🎨** picks one of **16 board themes**, grouped dark and light: Midnight Felt, Classic Wood, Emerald Table, Ocean Deep, Noir, Neon Arcade, Ruby Velvet, Slate & Copper, Autumn Oak, Lavender Dusk, Carbon & Lime, Parchment, Sakura, Arctic, Desert Sand, Mint Cream. A theme re-points the shared colour tokens, so the whole interface follows the board, not just the grid. The choice is per-device and remembered.
 - Refreshing or losing connection is fine — the seat is held and the app auto-rejoins.
+
+## Configuration
+
+Copy `server/.env.example` to `server/.env`. Nothing in it is required:
+
+| Variables | What they switch on | Without them |
+|---|---|---|
+| `MONGODB_URI`, `JWT_SECRET` | accounts, friends, DMs, game history, profiles | guest play only; `/api/auth/*` answers 503 naming the missing variable |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | profile pictures | the profile page works, the upload button is hidden |
+| `PORT`, `CORS_ORIGIN`, `MONGODB_DB`, `JWT_EXPIRES_IN`, `CLOUDINARY_FOLDER` | — | sensible defaults |
+
+`GET /api/health` reports what's on, and the client hides UI it can't back up.
+
+## Accounts
+
+Three ways in: **guest** (a name, nothing else), **register** (name, email, password), or **sign in**. A guest still gets a real row, so a guest's games are attributed and can be **claimed** later — same id, same stats, same history, now with a password.
+
+Every player gets a short **tag** like `SCR-7QK4` alongside their name, which is what you hand someone who wants to add you.
+
+## Friends
+
+Search by name, tag, exact email, or raw id; the response says which it matched on. Email matching is exact only — substring email search would make the endpoint an address directory.
+
+Requests are one-way until accepted, and asking someone who already asked you just accepts. Friends show live presence (online, and which room they're in), you can DM them outside any game, and you can tick several at once and **invite them all into your room** — the invite lands as a banner wherever they are in the site.
+
+## Profiles
+
+Name, bio, picture, and a record: games, wins and win rate, best game, bingos, average and total score, words and tiles played, and your **top word** with what it scored. All of it accumulates from finished games. Pictures go to Cloudinary, cropped to a square thumbnail server-side.
+
+## Game archive
+
+Every finished game is stored with its seats, final scores, winners and the complete turn log. `/history` lists them with who you played; opening one replays the whole game move by move — the same log the in-game panel shows, including the endgame leftover-tile settlement. There's also a "who you play most" list.
+
+## Dictionary page
+
+`/dictionary` is a standalone word tool, no account needed:
+
+- **Is it a word?** — a straight yes/no from the game's own list, plus what it scores and longer words that start with it. A miss suggests near-neighbours instead of dead-ending.
+- **Starts with** — every word from a prefix, shortest first.
+- **From these letters** — what you could build from a rack; `?` is a blank.
 
 ## Tiles left
 
@@ -66,7 +111,11 @@ The server keeps the last 80 messages per room and hands the backlog to anyone w
 
 The host can seat up to 3 computer players from the lobby, each at Easy, Medium or Hard. They take their turn about a second or two after it comes round, so moves feel played rather than teleported in.
 
-`server/bot.js` generates moves the classic way — anchors (empty squares touching the board), per-square cross-checks for the perpendicular word, and a prefix index over the dictionary to prune dead branches. Every candidate goes back through `validateMove()` for scoring, so a bot can never make a move a human couldn't. Difficulty is how it picks from that list: Hard takes the best play, Medium samples the top slice, Easy takes the best of a handful of random looks. Bots hold on to blanks unless a play really pays for them, and swap awkward tiles when they're stuck.
+`server/bot.js` generates moves the classic way — anchors (empty squares touching the board), per-square cross-checks for the perpendicular word, and a prefix index over the dictionary to prune dead branches. Every candidate goes back through `validateMove()` for scoring, so a bot can never make a move a human couldn't.
+
+Difficulty is how it picks from that list, and it's measured rather than asserted: over 20 three-way self-play games hard/medium/easy average **301 / 229 / 198** and hard takes 17 of 20. Hard plays the best move it can see; medium samples the top slice; easy is held to short words, modest turns and **never a bingo**, so a beginner isn't blown off the table. Once the bag is empty every level does the endgame arithmetic — going out collects the other racks, and tiles left in hand count against you twice.
+
+One thing that *didn't* make it: weighting the rack you keep alongside the score, which is the textbook refinement. Across ~150 self-play games at several weights it came out a coin flip, because this word list is broad enough that almost any seven tiles bingo, leaving little for rack quality to decide. It stayed in exactly one place — choosing which tiles to swap back, where nothing else is on the line.
 
 ## Rules implemented (server/game.js)
 
@@ -83,11 +132,17 @@ The host can seat up to 3 computer players from the lobby, each at Easy, Medium 
 
 ```
 server/
-  index.js   Socket.io rooms, join codes, rejoin tokens, chat log, bot scheduling
-  game.js    Pure game engine: bag, validation, scoring, leaving, endgame
-  bot.js     Move generation (anchors + cross-checks + prefix index), difficulty
-  test.js    Engine + bot unit tests (hand-verified scores)  → npm test
-  itest.js   End-to-end socket test (players, bots, chat)    → node itest.js
+  index.js       Socket.io rooms, join codes, rejoin tokens, chat log, bot scheduling
+  game.js        Pure game engine: bag, validation, scoring, leaving, endgame
+  bot.js         Move generation (anchors + cross-checks + prefix index), difficulty
+  accounts.js    Bridge: socket auth, presence, friend invites, history writes
+  config.js      Every env var, and which features each one switches on
+  api/           Express routers: auth, users, friends, messages, games, dictionary
+  db/models/     User, Friendship, GameRecord, DirectMessage
+  lib/           validate, stats, tokens, cloudinary, dictionary, presence
+  test.js        Engine, bot and library unit tests            → npm test
+  itest.js       End-to-end socket test (players, bots, chat)  → npm run test:socket
+  apitest.js     Account API over HTTP (needs MongoDB)         → npm run test:api
 client/src/
   App.jsx                 Session persistence + auto-rejoin + routing
   socket.js               Socket singleton (VITE_SERVER_URL override)
@@ -104,6 +159,9 @@ client/src/
   components/HistoryPanel.jsx Turn-by-turn log with running totals
   components/ThemePicker.jsx  Theme sheet, grouped dark/light
   components/ScoreBurst.jsx   Accepted-word score burst + bingo confetti
+  api.js                  Typed calls into /api
+  auth.jsx                Who is signed in + what this server supports
+  pages/                  Game, SignIn, Profile, Friends, Dictionary, History
 ```
 
 **Socket events:** `host:create` `host:start` `host:restart` `host:close` `host:setTimer` · `host:addBot` `host:removeBot` `host:setBotDifficulty` · `player:join` `player:move` `player:pass` `player:swap` `player:preview` `player:leave` · `chat:send` · `rejoin` `client:refresh` → server emits `state` (public, racks hidden) to the room, `rack` privately to each player, `history` for the move log, `chat:new` / `chat:history` for the thread, and `room:closed` when the host shuts the room down.

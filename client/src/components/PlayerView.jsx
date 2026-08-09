@@ -120,6 +120,40 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme, c
     );
   }, [staged, state.board]);
 
+  // Ask the server whether what's laid out spells anything, so each word can be
+  // outlined green or red before the play is committed. Debounced — a player
+  // shuffling tiles around shouldn't generate a request per tap.
+  const [wordChecks, setWordChecks] = useState(new Map());
+  const stagedWords = potential?.valid ? potential.words.map((w) => w.word).join(',') : '';
+  useEffect(() => {
+    if (!stagedWords) {
+      setWordChecks(new Map());
+      return;
+    }
+    const id = setTimeout(() => {
+      socket.emit('word:check', { words: stagedWords.split(',') }, (res) => {
+        setWordChecks(new Map((res?.results || []).map((r) => [r.word, r.valid])));
+      });
+    }, 220);
+    return () => clearTimeout(id);
+  }, [stagedWords]);
+
+  // Square -> 'ok' | 'bad', for every word the staged tiles form. A word is only
+  // marked once the server has answered for it.
+  const wordMarks = useMemo(() => {
+    const marks = new Map();
+    if (!potential?.valid) return marks;
+    for (const word of potential.words) {
+      const verdict = wordChecks.get(word.word);
+      if (verdict === undefined) continue;
+      for (const cell of word.cells) {
+        // A square shared by two words shows the problem, not the pass.
+        if (verdict === false || !marks.has(cell)) marks.set(cell, verdict ? 'ok' : 'bad');
+      }
+    }
+    return marks;
+  }, [potential, wordChecks]);
+
   // ── Interactions ──
   const tapRack = (id) => {
     if (swapMode) {
@@ -361,6 +395,7 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme, c
             onCellTap={tapCell}
             interactive
             showTargets={myTurn && selectedId !== null}
+            wordMarks={wordMarks}
           />
         </div>
       </div>
@@ -371,11 +406,22 @@ export default function PlayerView({ state, rack, me, onLeave, theme, onTheme, c
           {potential.valid ? (
             <>
               <span className="font-display text-lg font-semibold text-brasslight">+{potential.score}</span>
-              {potential.words.map((w, i) => (
-                <span key={i} className="text-mist">
-                  <span className="font-display font-semibold text-ivory">{w.word}</span> {w.score}
-                </span>
-              ))}
+              {potential.words.map((w, i) => {
+                const verdict = wordChecks.get(w.word);
+                return (
+                  <span key={i} className="text-mist">
+                    <span
+                      className={`font-display font-semibold ${
+                        verdict === true ? 'text-sage' : verdict === false ? 'text-cinnabar' : 'text-ivory'
+                      }`}
+                    >
+                      {w.word}
+                    </span>{' '}
+                    {w.score}
+                    {verdict === false && <span className="text-cinnabar"> ✕</span>}
+                  </span>
+                );
+              })}
               {potential.bingo && <span className="font-semibold text-sage">bingo +50</span>}
             </>
           ) : (

@@ -1,115 +1,113 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth';
 import { socket } from './socket';
-import Landing from './components/Landing';
-import HostView from './components/HostView';
-import PlayerView from './components/PlayerView';
 import { useTheme } from './components/ThemePicker';
-import { useChat } from './components/Chat';
-import { useHistory } from './components/HistoryPanel';
+import Game from './pages/Game';
+import SignIn from './pages/SignIn';
+import Profile from './pages/Profile';
+import Friends from './pages/Friends';
+import Dictionary from './pages/Dictionary';
+import History from './pages/History';
 
-const SKEY = 'scrabble-live-session';
-const loadSession = () => {
-  try { return JSON.parse(localStorage.getItem(SKEY)) || null; } catch { return null; }
-};
+/**
+ * A friend pulled you into a room. Shows wherever you are in the app, because
+ * an invite is worthless if you have to be on the right page to see it.
+ */
+function InviteBanner({ invite, onJoin, onDismiss }) {
+  if (!invite) return null;
+  return (
+    <div className="fixed inset-x-0 top-3 z-50 flex justify-center px-4">
+      <div className="slide-down card flex flex-wrap items-center gap-3 border-brass/50 px-4 py-3 shadow-lg">
+        <span className="text-sm">
+          <span className="font-semibold text-ivory">{invite.from.name}</span> invited you to room{' '}
+          <span className="font-display tracking-[0.2em] text-brasslight">{invite.code}</span>
+          {invite.players?.length > 0 && (
+            <span className="text-mist"> · {invite.players.map((p) => p.name).join(', ')}</span>
+          )}
+        </span>
+        <span className="ml-auto flex gap-2">
+          <button onClick={onDismiss} className="btn btn-ghost h-9 px-3 text-sm">Not now</button>
+          <button onClick={() => onJoin(invite)} className="btn btn-brass h-9 px-4 text-sm">Join</button>
+        </span>
+      </div>
+    </div>
+  );
+}
 
-export default function App() {
-  const [connected, setConnected] = useState(socket.connected);
-  const [session, setSessionState] = useState(loadSession);
-  const [state, setState] = useState(null);
-  const [rack, setRack] = useState([]);
-  const [landingError, setLandingError] = useState('');
+function Shell() {
+  const { loading } = useAuth();
+  const navigate = useNavigate();
+  const [invite, setInvite] = useState(null);
+  const [joinCode, setJoinCode] = useState('');
+
+  // Themes are chosen per device and apply to every page, not just the board,
+  // so the choice lives here rather than inside the game screen.
   const [theme, setTheme] = useTheme();
-  const chat = useChat();
-  const history = useHistory();
-
-  const setSession = (s) => {
-    setSessionState(s);
-    if (s) localStorage.setItem(SKEY, JSON.stringify(s));
-    else localStorage.removeItem(SKEY);
-  };
-
-  const clearSession = (message = '') => {
-    setSession(null);
-    setState(null);
-    setRack([]);
-    setLandingError(message);
-    chat.clear();
-    history.clear();
-  };
 
   useEffect(() => {
-    const onConnect = () => {
-      setConnected(true);
-      const s = loadSession();
-      if (s?.code) {
-        socket.emit('rejoin', s, (res) => {
-          if (res?.error) clearSession();
-        });
-      }
-    };
-    const onDisconnect = () => setConnected(false);
-    const onState = (st) => setState(st);
-    const onRack = (r) => setRack(r);
-    const onClosed = () => clearSession('The host closed the room.');
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('state', onState);
-    socket.on('rack', onRack);
-    socket.on('room:closed', onClosed);
-    if (socket.connected) onConnect();
-
+    const onInvite = (payload) => setInvite(payload);
+    const onDeclined = () => setInvite(null);
+    socket.on('invite:incoming', onInvite);
+    socket.on('invite:declined', onDeclined);
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('state', onState);
-      socket.off('rack', onRack);
-      socket.off('room:closed', onClosed);
+      socket.off('invite:incoming', onInvite);
+      socket.off('invite:declined', onDeclined);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleHost = () => {
-    socket.emit('host:create', (res) => {
-      if (res?.ok) {
-        setSession({ role: 'host', code: res.code, hostToken: res.hostToken });
-        setState(res.state);
-        setLandingError('');
-      }
-    });
-  };
+  const acceptInvite = useCallback((payload) => {
+    setJoinCode(payload.code);
+    setInvite(null);
+    navigate('/');
+  }, [navigate]);
 
-  const handleJoin = (code, name, done) => {
-    socket.emit('player:join', { code, name }, (res) => {
-      done?.();
-      if (res?.error) return setLandingError(res.error);
-      setSession({ role: 'player', code: res.code, playerId: res.playerId });
-      setLandingError('');
-    });
-  };
+  const declineInvite = useCallback(() => {
+    if (invite) socket.emit('invite:decline', { toUserId: invite.from.id, code: invite.code });
+    setInvite(null);
+  }, [invite]);
 
-  // Players give up their seat properly so turn order closes over them; the
-  // host tears the room down for everyone.
-  const handleLeave = () => {
-    const role = session?.role;
-    if (!socket.connected) {
-      clearSession();
-      return;
-    }
-    if (role === 'host') socket.emit('host:close', () => clearSession());
-    else socket.emit('player:leave', () => clearSession());
-  };
-
-  if (!session)
-    return <Landing connected={connected} onHost={handleHost} onJoin={handleJoin} error={landingError} />;
-
-  if (!state)
+  if (loading)
     return (
       <div className="grid min-h-dvh place-items-center text-sm text-mist">
-        <span className="fade-up">{connected ? 'Rejoining your game…' : 'Reconnecting to server…'}</span>
+        <span className="fade-up">Starting up…</span>
       </div>
     );
 
-  const shared = { theme, onTheme: setTheme, chat, history };
-  if (session.role === 'host') return <HostView state={state} onLeave={handleLeave} {...shared} />;
-  return <PlayerView state={state} rack={rack} me={session.playerId} onLeave={handleLeave} {...shared} />;
+  return (
+    <>
+      <InviteBanner invite={invite} onJoin={acceptInvite} onDismiss={declineInvite} />
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <Game
+              joinCode={joinCode}
+              onJoined={() => setJoinCode('')}
+              theme={theme}
+              onTheme={setTheme}
+            />
+          }
+        />
+        <Route path="/sign-in" element={<SignIn />} />
+        <Route path="/me" element={<Profile />} />
+        <Route path="/players/:id" element={<Profile />} />
+        <Route path="/friends" element={<Friends />} />
+        <Route path="/dictionary" element={<Dictionary />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/history/:id" element={<History />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Shell />
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }

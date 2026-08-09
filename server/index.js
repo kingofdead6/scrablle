@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 import {
@@ -9,15 +10,27 @@ import {
   setTurnSeconds, setPreview, leavePlayer, purgeLeftPlayers, humanPlayers,
 } from './game.js';
 import { chooseBotTurn, warmBotDictionary, pickBotName, BOT_DIFFICULTIES } from './bot.js';
+import { PORT, CORS_ORIGIN, describeConfig } from './config.js';
+import { connectDb } from './db/connect.js';
+import api from './api/index.js';
+import { checkWords } from './lib/dictionary.js';
+import { attachAccounts, trackRoom, recordFinishedGame } from './accounts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3001;
 const MAX_PLAYERS = 4; // + 1 host screen = 5 devices
 const MAX_BOTS = 3;    // so a solo human can still fill the table
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { cors: { origin: CORS_ORIGIN } });
+
+app.use(cors({ origin: CORS_ORIGIN }));
+app.use(express.json({ limit: '256kb' }));
+app.set('trust proxy', 1); // rate limiting keys on req.ip behind a proxy
+
+// The API has to be mounted before the SPA catch-all, or /api/* would be
+// answered with index.html.
+app.use('/api', api);
 
 // Serve the built client in production (client/dist)
 const clientDist = path.join(__dirname, '../client/dist');
@@ -82,6 +95,8 @@ function announceIfEnded(room, wasStatus) {
   postSystem(room, winners.length > 1
     ? `Game over — ${winners.join(' & ')} tie it.`
     : `Game over — ${winners[0]} wins.`);
+  // Fire-and-forget: history is worth having, never worth blocking a turn on.
+  recordFinishedGame(room).catch((err) => console.error('History write failed:', err));
 }
 
 // ─── Bots ─────────────────────────────────────────────────────────────────────
@@ -157,6 +172,8 @@ setInterval(() => {
   }
 }, 1000);
 
+attachAccounts({ io, app, rooms });
+
 // ─── Socket handlers ─────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   const findRoom = () => rooms.get(socket.data.code);
@@ -171,6 +188,7 @@ io.on('connection', (socket) => {
     rooms.set(code, room);
     socket.join(code);
     socket.data = { code, role: 'host' };
+    trackRoom(socket, code);
     cb?.({ ok: true, code, hostToken: room.hostToken, state: publicState(room.game, code), messages: room.messages });
   });
 
@@ -185,9 +203,13 @@ io.on('connection', (socket) => {
     if (room.game.players.some(p => p.name.toLowerCase() === name.toLowerCase()))
       return cb?.({ error: 'That name is taken in this room.' });
 
-    const player = { id: uid(), name, rack: [], score: 0, connected: true, socketId: socket.id };
+    const player = {
+      id: uid(), name, rack: [], score: 0, connected: true, socketId: socket.id,
+      userId: socket.account?.id || null,
+    };
     room.game.players.push(player);
     socket.join(code);
+    trackRoom(socket, code);
     socket.data = { code, role: 'player', playerId: player.id };
     cb?.({ ok: true, playerId: player.id, code });
     // Announce first, then hand over the log — otherwise the joiner's own
@@ -206,6 +228,7 @@ io.on('connection', (socket) => {
       room.hostSocketId = socket.id;
       socket.join(room.code);
       socket.data = { code: room.code, role: 'host' };
+      trackRoom(socket, room.code);
       cb?.({ ok: true, role: 'host', code: room.code });
       socket.emit('chat:history', room.messages);
       socket.emit('history', room.game.history);
@@ -218,6 +241,8 @@ io.on('connection', (socket) => {
     player.socketId = socket.id;
     socket.join(room.code);
     socket.data = { code: room.code, role: 'player', playerId };
+    player.userId = player.userId || socket.account?.id || null;
+    trackRoom(socket, room.code);
     cb?.({ ok: true, role: 'player', code: room.code, playerId });
     socket.emit('chat:history', room.messages);
     socket.emit('history', room.game.history);
@@ -230,6 +255,8 @@ io.on('connection', (socket) => {
     if (room.game.status !== 'lobby') return cb?.({ error: 'Game already started.' });
     if (room.game.players.length < 2) return cb?.({ error: 'Need at least 2 players.' });
     if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
+    room.startedAt = new Date();
+    room.recorded = false;
     startGame(room.game);
     cb?.({ ok: true });
     postSystem(room, 'Game on — good luck.');
@@ -326,6 +353,8 @@ io.on('connection', (socket) => {
     purgeLeftPlayers(room.game);
     if (room.game.players.length < 2) return cb?.({ error: 'Not enough players left for a rematch.' });
     if (humanPlayers(room.game).length === 0) return cb?.({ error: 'At least one human has to play.' });
+    room.startedAt = new Date();
+    room.recorded = false;
     startGame(room.game);
     cb?.({ ok: true });
     postSystem(room, 'Rematch — new board, same table.');
@@ -359,6 +388,7 @@ io.on('connection', (socket) => {
     if (result.error) return cb?.(result);
     socket.leave(room.code);
     socket.data = {};
+    trackRoom(socket, null);
     cb?.({ ok: true });
     postSystem(room, `${player.name} left the game.`);
     announceIfEnded(room, wasStatus);
@@ -411,6 +441,15 @@ io.on('connection', (socket) => {
     scheduleBotTurn(ctx.room);
   });
 
+  /**
+   * Is what I've laid out a real word (yet)? Answers per word so the board can
+   * outline each one green or red before the player commits. Read-only — it
+   * never touches the game, and applyMove still has the final say.
+   */
+  socket.on('word:check', ({ words } = {}, cb) => {
+    cb?.({ results: checkWords(words) });
+  });
+
   // Live "shadow tile" preview of tiles a player has staged but not yet submitted.
   socket.on('player:preview', ({ placements }) => {
     const room = findRoom();
@@ -431,6 +470,7 @@ io.on('connection', (socket) => {
     rooms.delete(room.code);
     socket.leave(room.code);
     socket.data = {};
+    trackRoom(socket, null);
     cb?.({ ok: true });
   });
 
@@ -449,4 +489,11 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => console.log(`Scrabble Live server on :${PORT}`));
+const config = describeConfig();
+await connectDb();
+server.listen(PORT, () => {
+  console.log(`Scrabble Live server on :${PORT}`);
+  console.log(`  accounts: ${config.accounts ? 'on' : 'off (guest play only)'}`);
+  console.log(`  uploads:  ${config.uploads ? 'on' : 'off (no profile pictures)'}`);
+  if (config.missing.length > 0) console.log(`  unset:    ${config.missing.join(', ')}`);
+});

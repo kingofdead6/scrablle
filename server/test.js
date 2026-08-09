@@ -223,5 +223,170 @@ assert(pub.players.every(p => p.rack === undefined && typeof p.rackCount === 'nu
   assert(chooseBotTurn(empty, 0).type === 'pass', 'a stuck bot with an empty bag passes');
 }
 
+// ── Bot difficulty means something ──
+{
+  const { chooseBotTurn: pick } = await import('./bot.js');
+  const totals = { hard: 0, medium: 0, easy: 0 };
+  let easyBingos = 0, easyLongest = 0, easyBest = 0;
+
+  for (let round = 0; round < 3; round++) {
+    const g = createGame();
+    g.players.push(
+      { id: 'h', name: 'hard', rack: [], score: 0, connected: true, isBot: true, difficulty: 'hard' },
+      { id: 'm', name: 'medium', rack: [], score: 0, connected: true, isBot: true, difficulty: 'medium' },
+      { id: 'e', name: 'easy', rack: [], score: 0, connected: true, isBot: true, difficulty: 'easy' },
+    );
+    startGame(g);
+    for (let turn = 0; turn < 150 && g.status === 'playing'; turn++) {
+      const idx = g.turn;
+      const move = pick(g, idx);
+      if (move.type === 'play' && g.players[idx].difficulty === 'easy') {
+        if (move.bingo) easyBingos++;
+        easyLongest = Math.max(easyLongest, ...move.words.map((w) => w.word.length));
+        easyBest = Math.max(easyBest, move.score);
+      }
+      if (move.type === 'play') { if (applyMove(g, idx, move.placements).error) passTurn(g, idx); }
+      else if (move.type === 'swap') { if (swapTiles(g, idx, move.letters).error) passTurn(g, idx); }
+      else passTurn(g, idx);
+    }
+    for (const p of g.players) totals[p.name] += p.score;
+  }
+
+  // Hard clears easy by a wide margin every time. Medium and easy are close
+  // enough (229 vs 198 over 20 games) that three games can't separate them, so
+  // this asserts the gap it can actually see rather than a flaky ordering.
+  assert(totals.hard > totals.easy,
+    `hard out-scores easy (${totals.hard} / ${totals.medium} / ${totals.easy})`);
+  assert(easyBingos === 0, `easy never plays a bingo (${easyBingos})`);
+  assert(easyLongest <= 6, `easy sticks to short words (longest ${easyLongest})`);
+  assert(easyBest <= 30, `easy never lands a big turn (best ${easyBest})`);
+
+  // Deterministic side of the same claim: with tiles still in the bag, hard's
+  // rating is the raw score, so its pick has to be the best play available.
+  const { findMoves } = await import('./bot.js');
+  const board = createGame();
+  board.players.push(
+    { id: 'h', name: 'hard', rack: [], score: 0, connected: true, isBot: true, difficulty: 'hard' },
+    { id: 'e', name: 'easy', rack: [], score: 0, connected: true, isBot: true, difficulty: 'easy' },
+  );
+  startGame(board);
+  board.turn = 0;
+  board.players[0].rack = ['H', 'E', 'L', 'L', 'O', 'A', 'T'];
+  board.players[1].rack = [...board.players[0].rack];
+
+  const best = Math.max(...findMoves(board, 0)
+    .map((p) => validateMove(board, 0, p))
+    .filter((r) => !r.error)
+    .map((r) => r.score));
+  const hardPick = pick(board, 0);
+  assert(hardPick.score === best, `hard takes the best play on the board (${hardPick.score} of ${best})`);
+  // Easy's caps are covered above, across ~150 real turns with enough variety
+  // for them to actually bite; asserting them on one fixed board would only
+  // prove the board had no big play on it.
+}
+
+// ── Rack-leave scoring (drives which tiles a bot swaps back) ──
+{
+  const { leaveValue } = await import('./bot.js');
+  assert(leaveValue(['_']) > leaveValue(['S']), 'a blank is worth more than an S');
+  assert(leaveValue(['S']) > leaveValue(['V']), 'an S is worth more than a V');
+  assert(leaveValue(['A', 'E', 'T', 'R']) > leaveValue(['A', 'A', 'A', 'A']),
+    'a balanced rack beats four of the same letter');
+  assert(leaveValue(['Q', 'T', 'R', 'N']) < leaveValue(['Q', 'U', 'T', 'R']),
+    'a Q with no U is a liability');
+  assert(leaveValue([]) === 0, 'an empty rack is worth nothing');
+}
+
+// ── Account input rules ──
+{
+  const v = await import('./lib/validate.js');
+  assert(v.checkName('  Youcef  ').value === 'Youcef', 'names are trimmed');
+  assert(!v.checkName('a').ok, 'a one-character name is rejected');
+  assert(!v.checkName('bad<script>').ok, 'names reject punctuation');
+  assert(v.checkName('Kahlouche_1').ok, 'letters, digits and underscores are fine');
+
+  assert(v.checkEmail(' NY@ESI.DZ ').value === 'ny@esi.dz', 'emails are lowercased and trimmed');
+  assert(!v.checkEmail('nope').ok, 'a bare word is not an email');
+  assert(!v.checkEmail('a@b').ok, 'an email needs a dotted domain');
+
+  assert(!v.checkPassword('short1').ok, 'short passwords are rejected');
+  assert(!v.checkPassword('allletters').ok, 'passwords need a digit');
+  assert(!v.checkPassword('12345678').ok, 'passwords need a letter');
+  assert(v.checkPassword('correct1horse').ok, 'a letters-and-digits password passes');
+
+  assert(v.isTag(v.generateTag()), `generated tags match the SCR-XXXX shape (${v.generateTag()})`);
+  assert(v.classifySearch('SCR-7QK4').kind === 'tag', 'a tag is recognised');
+  assert(v.classifySearch('a'.repeat(24)).kind === 'id', 'a 24-hex string is treated as an id');
+  assert(v.classifySearch('ny@esi.dz').kind === 'email', 'an address is recognised');
+  assert(v.classifySearch('Youcef').kind === 'name', 'anything else is a name');
+  assert(v.escapeRegex('a.b*c').includes('\\.'), 'regex metacharacters are escaped');
+}
+
+// ── Turning a finished game into profile stats ──
+{
+  const { tallyGame, applyTally } = await import('./lib/stats.js');
+  const finished = {
+    players: [{ name: 'Youcef', score: 240 }, { name: 'Amine', score: 180 }],
+    winners: ['Youcef'],
+    history: [
+      { type: 'play', playerName: 'Youcef', words: [{ word: 'HELLO', score: 18 }], score: 18, bingo: false },
+      { type: 'play', playerName: 'Youcef', words: [{ word: 'QUARTZY', score: 92 }], score: 92, bingo: true },
+      { type: 'pass', playerName: 'Amine' },
+      { type: 'play', playerName: 'Amine', words: [{ word: 'CAT', score: 9 }, { word: 'AT', score: 3 }], score: 12 },
+    ],
+  };
+
+  const tally = tallyGame(finished);
+  const mine = tally.get('Youcef');
+  assert(mine.won === true && mine.score === 240, 'the winner is tallied as a win');
+  assert(mine.bingos === 1, `bingos are counted (${mine.bingos})`);
+  assert(mine.bestWord.word === 'QUARTZY', `the best word is picked out (${mine.bestWord.word})`);
+  assert(mine.tilesPlayed === 12, `tiles played counts a bingo as 7 (${mine.tilesPlayed})`);
+  const theirs = tally.get('Amine');
+  assert(theirs.won === false && theirs.wordsPlayed === 2, 'the loser is tallied without a win');
+  assert(theirs.bestWord.word === 'CAT', 'the best word wins on score, not order');
+
+  const first = applyTally(null, mine);
+  assert(first.games === 1 && first.wins === 1 && first.bestScore === 240, 'first game seeds the totals');
+  const second = applyTally(first, { ...theirs, score: 100 });
+  assert(second.games === 2 && second.wins === 1 && second.losses === 1, 'a second game accumulates');
+  assert(second.bestScore === 240, 'a worse game does not lower the best score');
+  assert(second.bestWord.word === 'QUARTZY', 'a weaker word does not replace the best one');
+  assert(first.bestWord.word === 'QUARTZY' && first.games === 1, 'applyTally never mutates its input');
+
+  const tied = tallyGame({
+    players: [{ name: 'A', score: 100 }, { name: 'B', score: 100 }],
+    winners: ['A', 'B'],
+    history: [],
+  });
+  assert(tied.get('A').tied === true && tied.get('A').won === false, 'a tie is not a win');
+  assert(applyTally(null, tied.get('A')).ties === 1, 'ties are counted separately');
+}
+
+// ── Dictionary service (backs the word page and the in-game check) ──
+{
+  const d = await import('./lib/dictionary.js');
+  assert(d.lookup('scrabble').valid === true, 'a real word is found regardless of case');
+  assert(d.lookup('ZZQQXX').valid === false, 'nonsense is rejected');
+  assert(!!d.lookup('a b').error, 'input with a space is an error, not a miss');
+  assert(!!d.lookup('x'.repeat(16)).error, 'anything past 15 letters is refused');
+  assert(d.lookup('QI').value === 11, `face value is computed (QI = ${d.lookup('QI').value})`);
+
+  const starts = d.startingWith('SCRABB');
+  assert(starts.includes('SCRABBLE'), 'prefix search finds the obvious word');
+  assert(starts.every((w) => w.startsWith('SCRABB')), 'prefix search returns only matches');
+
+  const made = d.fromLetters('CATS');
+  assert(made.includes('CAT') && made.includes('ACTS'), 'rack search finds words in the letters');
+  assert(!made.includes('CATCH'), 'rack search will not invent letters it was not given');
+  assert(d.fromLetters('CA?').includes('CAB'), 'a ? stands in for a blank');
+  assert(d.fromLetters('A').length === 0, 'one letter is not enough to search');
+
+  const checked = d.checkWords(['hello', 'zzzz', '']);
+  assert(checked[0].valid === true && checked[1].valid === false, 'batch checking marks each word');
+  assert(checked[2].valid === false, 'an empty entry is not a word');
+  assert(d.checkWords('nope').length === 0, 'non-array input yields nothing');
+}
+
 console.log(failures === 0 ? '\nAll tests passed.' : `\n${failures} test(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

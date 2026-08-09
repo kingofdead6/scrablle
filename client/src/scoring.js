@@ -8,7 +8,8 @@ const inBounds = (r, c) => r >= 0 && r < 15 && c >= 0 && c < 15;
 /**
  * @param board  the 15×15 server board (cells or null)
  * @param placements [{ row, col, letter, isBlank }] — letters already resolved
- * @returns { valid, score, words: [{word, score}], bingo } or { valid: false, reason }
+ * @returns { valid, score, words: [{word, score, cells}], bingo }
+ *          or { valid: false, reason }
  */
 export function scoreStaged(board, placements) {
   if (!Array.isArray(placements) || placements.length === 0)
@@ -109,7 +110,13 @@ export function scoreStaged(board, placements) {
     }
     const score = sum * mult;
     total += score;
-    return { word: cells.map((x) => x.cell.letter).join(''), score };
+    return {
+      word: cells.map((x) => x.cell.letter).join(''),
+      score,
+      // Squares this word covers, so the board can outline it once the server
+      // says whether it is real.
+      cells: cells.map((x) => `${x.r},${x.c}`),
+    };
   });
 
   const bingo = placements.length === 7;

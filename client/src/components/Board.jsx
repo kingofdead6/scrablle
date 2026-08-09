@@ -31,6 +31,7 @@ export default function Board({
   onCellTap,
   interactive = false,
   showTargets = false,
+  wordMarks = new Map(),
 }) {
   const targets = useMemo(
     () => (showTargets ? findTargets(board, staged) : new Set()),
@@ -47,6 +48,7 @@ export default function Board({
           const shadowTile = !stagedTile ? shadow.get(key) : null;
           const isLast = lastCells.has(key);
           const isTarget = targets.has(key) && !cell && !stagedTile;
+          const mark = wordMarks.get(key); // 'ok' | 'bad' | undefined
           const Comp = interactive ? 'button' : 'div';
           return (
             <Comp
@@ -58,6 +60,7 @@ export default function Board({
                 bonus ? `cell--${bonus}` : '',
                 isLast ? 'cell--last' : '',
                 isTarget ? 'cell--target' : '',
+                mark ? `cell--${mark}` : '',
               ].join(' ')}
               aria-label={`Row ${r + 1}, column ${c + 1}`}
             >
