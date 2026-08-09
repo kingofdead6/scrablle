@@ -574,6 +574,25 @@ html[data-board-theme="mint"] {
 }
 .cell-star { font-size: 3.4cqi; color: var(--star); line-height: 1; }
 .cell--last { box-shadow: 0 0 0 0.35cqi var(--color-brass), 0 0 1.6cqi color-mix(in srgb, var(--color-brass) 55%, transparent); }
+/* While tiles are staged, each word the server has judged gets a ring: green
+   if it's a real word, red if it isn't. */
+.cell--ok {
+  box-shadow: 0 0 0 0.4cqi var(--color-sage), 0 0 1.4cqi color-mix(in srgb, var(--color-sage) 55%, transparent);
+  z-index: 2;
+}
+.cell--bad {
+  box-shadow: 0 0 0 0.4cqi var(--color-cinnabar), 0 0 1.4cqi color-mix(in srgb, var(--color-cinnabar) 55%, transparent);
+  z-index: 2;
+  animation: badWord 0.35s ease;
+}
+@keyframes badWord {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-0.5cqi); }
+  70% { transform: translateX(0.5cqi); }
+}
+/* The ring has to sit above the tile that fills the square. */
+.cell--ok, .cell--bad { overflow: visible; }
+
 /* A legal target lights up while you're holding a tile. */
 .cell--target::after {
   content: '';
@@ -851,7 +870,7 @@ html[data-board-theme="mint"] {
 @media (prefers-reduced-motion: reduce) {
   .pop, .fade-up, .pulse-turn, .drop, .slide-down, .slide-up, .deal, .burst,
   .burst-number, .float-away, .confetti, .think-dot, .shake, .spin,
-  .tile--shadow, .tile--fresh::before, .cell--target::after {
+  .tile--shadow, .tile--fresh::before, .cell--target::after, .cell--bad {
     animation: none;
   }
 }

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 function WordmarkTile({ ch, i }) {
   return (
@@ -8,10 +9,17 @@ function WordmarkTile({ ch, i }) {
   );
 }
 
-export default function Landing({ connected, onHost, onJoin, error }) {
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
+export default function Landing({
+  connected, onHost, onJoin, error,
+  defaultName = '', lockName = false, prefillCode = '', accountsOn = false,
+}) {
+  const [code, setCode] = useState(prefillCode);
+  const [name, setName] = useState(defaultName);
   const [busy, setBusy] = useState(false);
+
+  // An invite arrives with a code; drop it straight into the box.
+  useEffect(() => { if (prefillCode) setCode(prefillCode); }, [prefillCode]);
+  useEffect(() => { if (defaultName) setName(defaultName); }, [defaultName]);
 
   const join = () => {
     if (busy) return;
@@ -64,13 +72,19 @@ export default function Landing({ connected, onHost, onJoin, error }) {
               autoCapitalize="characters"
               className="h-12 w-full rounded-lg border border-line bg-ink/60 text-center font-display text-2xl font-semibold tracking-[0.5em] text-ivory placeholder:tracking-normal placeholder:text-mist/40 focus:border-brass focus:outline-none"
             />
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              maxLength={16}
-              className="h-11 w-full rounded-lg border border-line bg-ink/60 px-3 text-ivory placeholder:text-mist/40 focus:border-brass focus:outline-none"
-            />
+            {lockName ? (
+              <p className="flex h-11 w-full items-center rounded-lg border border-line bg-ink/40 px-3 text-sm text-mist">
+                Joining as <span className="ml-1.5 font-semibold text-ivory">{name}</span>
+              </p>
+            ) : (
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+                maxLength={16}
+                className="h-11 w-full rounded-lg border border-line bg-ink/60 px-3 text-ivory placeholder:text-mist/40 focus:border-brass focus:outline-none"
+              />
+            )}
             <button
               onClick={join}
               disabled={!connected || code.length !== 4 || !name.trim() || busy}
@@ -80,6 +94,20 @@ export default function Landing({ connected, onHost, onJoin, error }) {
             </button>
           </div>
         </section>
+
+        <nav className="flex flex-wrap justify-center gap-2">
+          <Link to="/dictionary" className="btn btn-ghost h-10 px-4 text-sm">Dictionary</Link>
+          {accountsOn && (
+            <>
+              <Link to="/friends" className="btn btn-ghost h-10 px-4 text-sm">Friends</Link>
+              <Link to="/history" className="btn btn-ghost h-10 px-4 text-sm">Your games</Link>
+              <Link to="/me" className="btn btn-ghost h-10 px-4 text-sm">Profile</Link>
+            </>
+          )}
+          <Link to="/sign-in" className="btn btn-ghost h-10 px-4 text-sm">
+            {lockName ? 'Account' : 'Sign in'}
+          </Link>
+        </nav>
 
         {error && (
           <p className="shake rounded-lg border border-cinnabar/40 bg-cinnabar/15 px-4 py-2.5 text-center text-sm text-dangerink">
