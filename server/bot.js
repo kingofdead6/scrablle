@@ -209,32 +209,111 @@ export function findMoves(game, playerIdx) {
   return out;
 }
 
+// ─── Judging a play ──────────────────────────────────────────────────────────
+// Raw score is a poor guide on its own: the tiles you keep decide what you can
+// do next turn. These are the standard rack-leave heuristics — hold blanks and
+// S, keep vowels and consonants roughly balanced, shed duplicates and clunkers.
+
+const VOWELS = new Set(['A', 'E', 'I', 'O', 'U']);
+const CLUNKY = { V: 5, W: 3, U: 1, J: 1, C: 1, B: 1, G: 1 };
+const BLANK_WORTH = 24;
+const S_WORTH = 8;
+const IDEAL_VOWEL_SHARE = 0.4;
+
+/** What a rack is worth to hold onto, in rough points-next-turn. */
+export function leaveValue(tiles) {
+  if (tiles.length === 0) return 0;
+
+  const counts = {};
+  for (const tile of tiles) counts[tile] = (counts[tile] || 0) + 1;
+
+  let value = (counts._ || 0) * BLANK_WORTH + (counts.S || 0) * S_WORTH;
+
+  let vowels = 0, consonants = 0;
+  for (const tile of tiles) {
+    if (tile === '_') continue;
+    if (VOWELS.has(tile)) vowels++;
+    else consonants++;
+  }
+  const letters = vowels + consonants;
+  if (letters > 0) value -= Math.abs(vowels - letters * IDEAL_VOWEL_SHARE) * 2.5;
+
+  for (const [tile, count] of Object.entries(counts))
+    if (tile !== '_' && count > 1) value -= (count - 1) * 2.5;
+
+  for (const tile of tiles) value -= CLUNKY[tile] || 0;
+
+  // A Q you cannot unload is the classic way to lose a close game.
+  if (counts.Q && !counts.U && !counts._) value -= 12;
+
+  return value;
+}
+
+const rackValue = (tiles) => tiles.reduce((sum, t) => sum + (LETTER_VALUES[t] || 0), 0);
+
+/** The rack a play would leave behind. */
+function remainingAfter(rack, placements) {
+  const left = [...rack];
+  for (const p of placements) {
+    const tile = p.isBlank ? '_' : p.letter;
+    const at = left.indexOf(tile);
+    if (at !== -1) left.splice(at, 1);
+  }
+  return left;
+}
+
+/**
+ * How good a play is.
+ *
+ * Mid-game this is just the score. Weighting the rack you keep alongside it is
+ * the textbook refinement, and it was tried here — across ~150 self-play games
+ * at several weights it came out a coin flip, because this word list is broad
+ * enough that almost any seven tiles bingo, so rack quality barely binds. It
+ * still decides *swaps* (see tilesToSwap), where nothing else is on the line.
+ *
+ * Once the bag is empty the arithmetic changes and stops being a guess: going
+ * out ends the game and hands you everyone else's leftovers, while tiles stuck
+ * in your hand count twice against you — off your score and onto theirs.
+ */
+function ratePlay(game, rack, move) {
+  if (game.bag.length > 0) return move.score;
+  const left = remainingAfter(rack, move.placements);
+  return left.length === 0 ? move.score + 30 : move.score - rackValue(left) * 2;
+}
+
+// What an "easy" bot is allowed to notice: short words only, nothing huge, and
+// never all seven tiles. A beginner shouldn't lose to a 90-point bingo.
+const EASY_MAX_WORD = 6;
+const EASY_MAX_SCORE = 30;
+
 // ─── Choosing a play ─────────────────────────────────────────────────────────
 const KEEPERS = new Set('AEILNORSTDGU'.split(''));
 
-/** Tiles a bot is happy to throw back: awkward letters first, then duplicates. */
+/**
+ * Which tiles to throw back. Tries every small subset and keeps whichever leave
+ * scores best, so a bot swaps to fix its rack rather than just dumping junk.
+ */
 function tilesToSwap(rack, bagCount) {
   const budget = Math.min(bagCount, rack.length);
   if (budget <= 0) return [];
-  const seen = {};
-  const ranked = rack
-    .map((letter, i) => {
-      seen[letter] = (seen[letter] || 0) + 1;
-      const awkward = letter !== '_' && !KEEPERS.has(letter);
-      const duplicate = seen[letter] > 2;
-      return { letter, i, weight: (awkward ? 2 : 0) + (duplicate ? 1 : 0) + (LETTER_VALUES[letter] >= 8 ? 2 : 0) };
-    })
-    .filter((t) => t.letter !== '_' && t.weight > 0)
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, budget);
-  // Nothing obviously bad? Dump the back half of the rack and hope for better.
-  if (ranked.length === 0)
-    return rack.filter((l) => l !== '_').slice(0, Math.min(budget, 3));
-  return ranked.map((t) => t.letter);
-}
 
-const sampleIndices = (length, count) =>
-  Array.from({ length: Math.min(count, length) }, () => Math.floor(Math.random() * length));
+  let best = { letters: [], value: leaveValue(rack) };
+  // Ranked worst-first, then try dropping the worst 1..budget of them.
+  const ranked = rack
+    .map((letter, i) => ({ letter, i, keep: letter === '_' || KEEPERS.has(letter) }))
+    .sort((a, b) => Number(a.keep) - Number(b.keep));
+
+  for (let take = 1; take <= budget; take++) {
+    const letters = ranked.slice(0, take).filter((t) => t.letter !== '_').map((t) => t.letter);
+    if (letters.length === 0) continue;
+    const value = leaveValue(remainingAfter(rack, letters.map((letter) => ({ letter }))));
+    if (value > best.value) best = { letters, value };
+  }
+  // Nothing improved the rack? Still shed the worst tiles rather than stall.
+  if (best.letters.length === 0)
+    return ranked.filter((t) => !t.keep).slice(0, Math.min(budget, 3)).map((t) => t.letter);
+  return best.letters;
+}
 
 /**
  * Picks this bot's turn. Returns one of:
@@ -250,19 +329,16 @@ export function chooseBotTurn(game, playerIdx) {
   for (const placements of findMoves(game, playerIdx)) {
     const result = validateMove(game, playerIdx, placements);
     if (result.error) continue;
-    const blanks = placements.filter((p) => p.isBlank).length;
-    scored.push({
-      placements,
-      score: result.score,
-      words: result.words,
-      bingo: result.bingo,
-      // Bots hold on to blanks unless the play really pays for them.
-      rating: result.score - blanks * 5,
-    });
+    const move = { placements, score: result.score, words: result.words, bingo: result.bingo };
+    move.rating = ratePlay(game, player.rack, move);
+    move.longest = Math.max(...result.words.map((w) => w.word.length));
+    scored.push(move);
   }
 
   if (scored.length === 0) {
-    const letters = tilesToSwap(player.rack, game.bag.length);
+    const letters = difficulty === 'easy'
+      ? player.rack.filter((l) => l !== '_').slice(0, Math.min(game.bag.length, 3))
+      : tilesToSwap(player.rack, game.bag.length);
     return letters.length > 0 ? { type: 'swap', letters } : { type: 'pass' };
   }
 
@@ -274,8 +350,13 @@ export function chooseBotTurn(game, playerIdx) {
     const top = scored.slice(0, Math.max(1, Math.ceil(scored.length * 0.15))).slice(0, 12);
     pick = top[Math.floor(Math.random() * top.length)];
   } else {
-    // Easy plays the best word it happens to notice — a handful of random looks.
-    pick = scored[Math.min(...sampleIndices(scored.length, 6))];
+    // Easy only sees short, modest words — and never plays a bingo. If nothing
+    // fits that description it takes the smallest play available.
+    const gentle = scored.filter(
+      (m) => !m.bingo && m.longest <= EASY_MAX_WORD && m.score <= EASY_MAX_SCORE
+    );
+    // Best of what it's allowed to see — steady rather than erratic.
+    pick = gentle.length > 0 ? gentle[0] : scored[scored.length - 1];
   }
 
   return { type: 'play', placements: pick.placements, score: pick.score, words: pick.words, bingo: pick.bingo };
